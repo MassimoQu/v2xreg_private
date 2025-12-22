@@ -1,0 +1,790 @@
+diff --git a/opencood/data_utils/datasets/basedataset/dairv2x_basedataset.py b/opencood/data_utils/datasets/basedataset/dairv2x_basedataset.py
+index 632e874..4766bca 100644
+--- a/opencood/data_utils/datasets/basedataset/dairv2x_basedataset.py
++++ b/opencood/data_utils/datasets/basedataset/dairv2x_basedataset.py
+@@ -29,6 +29,10 @@ class DAIRV2XBaseDataset(Dataset):
+         self.params = params
+         self.visualize = visualize
+         self.train = train
++        self.force_ego_cav = ""
++        force_cfg = params.get('force_ego_cav')
++        if force_cfg:
++            self.force_ego_cav = str(force_cfg).lower()
+ 
+         self.pre_processor = build_preprocessor(params["preprocess"], train)
+         self.post_processor = build_postprocessor(params["postprocess"], train)
+@@ -159,6 +163,20 @@ class DAIRV2XBaseDataset(Dataset):
+         data[1]['params']['vehicles_single_all'] = read_json(os.path.join(self.root_dir, \
+                                 'infrastructure-side/label/virtuallidar/{}.json'.format(inf_frame_id)))
+ 
++        force_applied = False
++        if self.force_ego_cav:
++            force_target = None
++            if self.force_ego_cav.startswith('veh'):
++                force_target = 0
++            elif self.force_ego_cav.startswith('infra'):
++                force_target = 1
++            if force_target is not None:
++                force_applied = True
++                if force_target == 1:
++                    data[0], data[1] = data[1], data[0]
++                data[0]['ego'] = True
++                data[1]['ego'] = False
++
+         if getattr(self, "heterogeneous", False):
+             self.generate_object_center_lidar = \
+                                 partial(self.generate_object_center_single_hetero, modality='lidar')
+@@ -172,19 +190,21 @@ class DAIRV2XBaseDataset(Dataset):
+             # data[0]['modality_name'] = 'm2'
+             # data[1]['modality_name'] = 'm1'
+ 
+-            if self.train: # randomly choose RSU or Veh to be Ego
+-                p = np.random.rand()
+-                if p > 0.5:
+-                    data[0], data[1] = data[1], data[0]
+-                    data[0]['ego'] = True
+-                    data[1]['ego'] = False
++            if self.train:
++                if not force_applied:
++                    p = np.random.rand()
++                    if p > 0.5:
++                        data[0], data[1] = data[1], data[0]
++                        data[0]['ego'] = True
++                        data[1]['ego'] = False
+             else:
+-                # evaluate, the agent of ego modality should be ego
+-                if self.adaptor.mapping_dict[data[0]['modality_name']] not in self.ego_modality and \
+-                    self.adaptor.mapping_dict[data[1]['modality_name']] in self.ego_modality:
+-                    data[0], data[1] = data[1], data[0]
+-                    data[0]['ego'] = True
+-                    data[1]['ego'] = False
++                if not force_applied:
++                    # evaluate, the agent of ego modality should be ego
++                    if self.adaptor.mapping_dict[data[0]['modality_name']] not in self.ego_modality and \
++                        self.adaptor.mapping_dict[data[1]['modality_name']] in self.ego_modality:
++                        data[0], data[1] = data[1], data[0]
++                        data[0]['ego'] = True
++                        data[1]['ego'] = False
+ 
+             data[0]['modality_name'] = self.adaptor.reassign_cav_modality(data[0]['modality_name'], 0)
+             data[1]['modality_name'] = self.adaptor.reassign_cav_modality(data[1]['modality_name'], 1)
+@@ -286,4 +306,4 @@ class DAIRV2XBaseDataset(Dataset):
+         object_bbx_center = tmp_dict['object_bbx_center']
+         object_bbx_mask = tmp_dict['object_bbx_mask']
+ 
+-        return lidar_np, object_bbx_center, object_bbx_mask
+\ No newline at end of file
++        return lidar_np, object_bbx_center, object_bbx_mask
+diff --git a/opencood/hypes_yaml/dairv2x/Single/DAIR_single_m1.yaml b/opencood/hypes_yaml/dairv2x/Single/DAIR_single_m1.yaml
+index d6d9147..5990f3f 100644
+--- a/opencood/hypes_yaml/dairv2x/Single/DAIR_single_m1.yaml
++++ b/opencood/hypes_yaml/dairv2x/Single/DAIR_single_m1.yaml
+@@ -6,8 +6,8 @@ test_dir: "dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json
+ 
+ yaml_parser: "load_general_params"
+ train_params:
+-  batch_size: &batch_size 2
+-  epoches: 30
++  batch_size: &batch_size 12
++  epoches: 20
+   eval_freq: 2
+   save_freq: 2
+   max_cav: 2
+@@ -176,4 +176,3 @@ lr_scheduler:
+   core_method: multistep #step, multistep and Exponential support
+   gamma: 0.1
+   step_size: [15, 25]
+-
+diff --git a/opencood/hypes_yaml/yaml_utils.py b/opencood/hypes_yaml/yaml_utils.py
+index caa71da..ba511cd 100644
+--- a/opencood/hypes_yaml/yaml_utils.py
++++ b/opencood/hypes_yaml/yaml_utils.py
+@@ -45,6 +45,9 @@ def load_yaml(file, opt=None):
+     param = yaml.load(stream, Loader=loader)
+     if "yaml_parser" in param:
+         param = eval(param["yaml_parser"])(param)
++    env_force_ego = os.environ.get('FORCE_EGO_CAV')
++    if env_force_ego:
++        param['force_ego_cav'] = env_force_ego
+ 
+     return param
+ 
+@@ -367,4 +370,4 @@ def load_general_params(param):
+ 
+     param['postprocess'].update({'anchor_args': anchor_args})
+ 
+-    return param
+\ No newline at end of file
++    return param
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/ball_query.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/ball_query.cpp
+index 67784c6..af6fbbe 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/ball_query.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/ball_query.cpp
+@@ -7,15 +7,13 @@ All Rights Reserved 2018.
+ 
+ #include <torch/serialize/tensor.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include <cuda.h>
+ #include <cuda_runtime_api.h>
+ #include "ball_query_gpu.h"
+ 
+-extern THCState *state;
+-
+ #define CHECK_CUDA(x) do { \
+-	  if (!x.type().is_cuda()) { \
++	  if (!x.is_cuda()) { \
+ 		      fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+ 		      exit(-1); \
+ 		    } \
+@@ -33,9 +31,9 @@ int ball_query_wrapper_fast(int b, int n, int m, float radius, int nsample,
+     at::Tensor new_xyz_tensor, at::Tensor xyz_tensor, at::Tensor idx_tensor) {
+     CHECK_INPUT(new_xyz_tensor);
+     CHECK_INPUT(xyz_tensor);
+-    const float *new_xyz = new_xyz_tensor.data<float>();
+-    const float *xyz = xyz_tensor.data<float>();
+-    int *idx = idx_tensor.data<int>();
++    const float *new_xyz = new_xyz_tensor.data_ptr<float>();
++    const float *xyz = xyz_tensor.data_ptr<float>();
++    int *idx = idx_tensor.data_ptr<int>();
+     
+     ball_query_kernel_launcher_fast(b, n, m, radius, nsample, new_xyz, xyz, idx);
+     return 1;
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/group_points.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/group_points.cpp
+index 5565700..c3e9c4d 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/group_points.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/group_points.cpp
+@@ -9,18 +9,16 @@ All Rights Reserved 2018.
+ #include <cuda.h>
+ #include <cuda_runtime_api.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include "group_points_gpu.h"
+ 
+-extern THCState *state;
+-
+ 
+ int group_points_grad_wrapper_fast(int b, int c, int n, int npoints, int nsample, 
+     at::Tensor grad_out_tensor, at::Tensor idx_tensor, at::Tensor grad_points_tensor) {
+ 
+-    float *grad_points = grad_points_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    const float *grad_out = grad_out_tensor.data<float>();
++    float *grad_points = grad_points_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    const float *grad_out = grad_out_tensor.data_ptr<float>();
+ 
+     group_points_grad_kernel_launcher_fast(b, c, n, npoints, nsample, grad_out, idx, grad_points);
+     return 1;
+@@ -30,9 +28,9 @@ int group_points_grad_wrapper_fast(int b, int c, int n, int npoints, int nsample
+ int group_points_wrapper_fast(int b, int c, int n, int npoints, int nsample, 
+     at::Tensor points_tensor, at::Tensor idx_tensor, at::Tensor out_tensor) {
+ 
+-    const float *points = points_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    float *out = out_tensor.data<float>();
++    const float *points = points_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    float *out = out_tensor.data_ptr<float>();
+ 
+     group_points_kernel_launcher_fast(b, c, n, npoints, nsample, points, idx, out);
+     return 1;
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/interpolate.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/interpolate.cpp
+index c2496e8..75f436b 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/interpolate.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/interpolate.cpp
+@@ -7,7 +7,7 @@ All Rights Reserved 2018.
+ 
+ #include <torch/serialize/tensor.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -15,15 +15,12 @@ All Rights Reserved 2018.
+ #include <cuda_runtime_api.h>
+ #include "interpolate_gpu.h"
+ 
+-extern THCState *state;
+-
+-
+ void three_nn_wrapper_fast(int b, int n, int m, at::Tensor unknown_tensor, 
+     at::Tensor known_tensor, at::Tensor dist2_tensor, at::Tensor idx_tensor) {
+-    const float *unknown = unknown_tensor.data<float>();
+-    const float *known = known_tensor.data<float>();
+-    float *dist2 = dist2_tensor.data<float>();
+-    int *idx = idx_tensor.data<int>();
++    const float *unknown = unknown_tensor.data_ptr<float>();
++    const float *known = known_tensor.data_ptr<float>();
++    float *dist2 = dist2_tensor.data_ptr<float>();
++    int *idx = idx_tensor.data_ptr<int>();
+ 
+     three_nn_kernel_launcher_fast(b, n, m, unknown, known, dist2, idx);
+ }
+@@ -35,10 +32,10 @@ void three_interpolate_wrapper_fast(int b, int c, int m, int n,
+                          at::Tensor weight_tensor,
+                          at::Tensor out_tensor) {
+ 
+-    const float *points = points_tensor.data<float>();
+-    const float *weight = weight_tensor.data<float>();
+-    float *out = out_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
++    const float *points = points_tensor.data_ptr<float>();
++    const float *weight = weight_tensor.data_ptr<float>();
++    float *out = out_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
+ 
+     three_interpolate_kernel_launcher_fast(b, c, m, n, points, idx, weight, out);
+ }
+@@ -49,10 +46,10 @@ void three_interpolate_grad_wrapper_fast(int b, int c, int n, int m,
+                             at::Tensor weight_tensor,
+                             at::Tensor grad_points_tensor) {
+ 
+-    const float *grad_out = grad_out_tensor.data<float>();
+-    const float *weight = weight_tensor.data<float>();
+-    float *grad_points = grad_points_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
++    const float *grad_out = grad_out_tensor.data_ptr<float>();
++    const float *weight = weight_tensor.data_ptr<float>();
++    float *grad_points = grad_points_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
+ 
+     three_interpolate_grad_kernel_launcher_fast(b, c, n, m, grad_out, idx, weight, grad_points);
+ }
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/sampling.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/sampling.cpp
+index d58ca27..1e361e6 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/sampling.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_batch/src/sampling.cpp
+@@ -8,18 +8,14 @@ All Rights Reserved 2018.
+ #include <torch/serialize/tensor.h>
+ #include <ATen/cuda/CUDAContext.h>
+ #include <vector>
+-#include <THC/THC.h>
+ 
+ #include "sampling_gpu.h"
+ 
+-extern THCState *state;
+-
+-
+ int gather_points_wrapper_fast(int b, int c, int n, int npoints, 
+     at::Tensor points_tensor, at::Tensor idx_tensor, at::Tensor out_tensor){
+-    const float *points = points_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    float *out = out_tensor.data<float>();
++    const float *points = points_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    float *out = out_tensor.data_ptr<float>();
+ 
+     gather_points_kernel_launcher_fast(b, c, n, npoints, points, idx, out);
+     return 1;
+@@ -29,9 +25,9 @@ int gather_points_wrapper_fast(int b, int c, int n, int npoints,
+ int gather_points_grad_wrapper_fast(int b, int c, int n, int npoints, 
+     at::Tensor grad_out_tensor, at::Tensor idx_tensor, at::Tensor grad_points_tensor) {
+ 
+-    const float *grad_out = grad_out_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    float *grad_points = grad_points_tensor.data<float>();
++    const float *grad_out = grad_out_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    float *grad_points = grad_points_tensor.data_ptr<float>();
+ 
+     gather_points_grad_kernel_launcher_fast(b, c, n, npoints, grad_out, idx, grad_points);
+     return 1;
+@@ -41,9 +37,9 @@ int gather_points_grad_wrapper_fast(int b, int c, int n, int npoints,
+ int furthest_point_sampling_wrapper(int b, int n, int m, 
+     at::Tensor points_tensor, at::Tensor temp_tensor, at::Tensor idx_tensor) {
+ 
+-    const float *points = points_tensor.data<float>();
+-    float *temp = temp_tensor.data<float>();
+-    int *idx = idx_tensor.data<int>();
++    const float *points = points_tensor.data_ptr<float>();
++    float *temp = temp_tensor.data_ptr<float>();
++    int *idx = idx_tensor.data_ptr<int>();
+ 
+     furthest_point_sampling_kernel_launcher(b, n, m, points, temp, idx);
+     return 1;
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/ball_query.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/ball_query.cpp
+index 8ae8f23..1901f81 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/ball_query.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/ball_query.cpp
+@@ -7,15 +7,13 @@ All Rights Reserved 2019-2020.
+ 
+ #include <torch/serialize/tensor.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include <cuda.h>
+ #include <cuda_runtime_api.h>
+ #include "ball_query_gpu.h"
+ 
+-extern THCState *state;
+-
+ #define CHECK_CUDA(x) do { \
+-  if (!x.type().is_cuda()) { \
++  if (!x.is_cuda()) { \
+     fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+     exit(-1); \
+   } \
+@@ -36,11 +34,11 @@ int ball_query_wrapper_stack(int B, int M, float radius, int nsample,
+     CHECK_INPUT(new_xyz_batch_cnt_tensor);
+     CHECK_INPUT(xyz_batch_cnt_tensor);
+ 
+-    const float *new_xyz = new_xyz_tensor.data<float>();
+-    const float *xyz = xyz_tensor.data<float>();
+-    const int *new_xyz_batch_cnt = new_xyz_batch_cnt_tensor.data<int>();
+-    const int *xyz_batch_cnt = xyz_batch_cnt_tensor.data<int>();
+-    int *idx = idx_tensor.data<int>();
++    const float *new_xyz = new_xyz_tensor.data_ptr<float>();
++    const float *xyz = xyz_tensor.data_ptr<float>();
++    const int *new_xyz_batch_cnt = new_xyz_batch_cnt_tensor.data_ptr<int>();
++    const int *xyz_batch_cnt = xyz_batch_cnt_tensor.data_ptr<int>();
++    int *idx = idx_tensor.data_ptr<int>();
+ 
+     ball_query_kernel_launcher_stack(B, M, radius, nsample, new_xyz, new_xyz_batch_cnt, xyz, xyz_batch_cnt, idx);
+     return 1;
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/group_points.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/group_points.cpp
+index 4f48b6d..5a158a1 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/group_points.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/group_points.cpp
+@@ -9,12 +9,11 @@ All Rights Reserved 2019-2020.
+ #include <cuda.h>
+ #include <cuda_runtime_api.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include "group_points_gpu.h"
+ 
+-extern THCState *state;
+ #define CHECK_CUDA(x) do { \
+-  if (!x.type().is_cuda()) { \
++  if (!x.is_cuda()) { \
+     fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+     exit(-1); \
+   } \
+@@ -38,11 +37,11 @@ int group_points_grad_wrapper_stack(int B, int M, int C, int N, int nsample,
+     CHECK_INPUT(features_batch_cnt_tensor);
+     CHECK_INPUT(grad_features_tensor);
+ 
+-    const float *grad_out = grad_out_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    const int *idx_batch_cnt = idx_batch_cnt_tensor.data<int>();
+-    const int *features_batch_cnt = features_batch_cnt_tensor.data<int>();
+-    float *grad_features = grad_features_tensor.data<float>();
++    const float *grad_out = grad_out_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    const int *idx_batch_cnt = idx_batch_cnt_tensor.data_ptr<int>();
++    const int *features_batch_cnt = features_batch_cnt_tensor.data_ptr<int>();
++    float *grad_features = grad_features_tensor.data_ptr<float>();
+ 
+     group_points_grad_kernel_launcher_stack(B, M, C, N, nsample, grad_out, idx, idx_batch_cnt, features_batch_cnt, grad_features);
+     return 1;
+@@ -59,12 +58,12 @@ int group_points_wrapper_stack(int B, int M, int C, int nsample,
+     CHECK_INPUT(idx_batch_cnt_tensor);
+     CHECK_INPUT(out_tensor);
+ 
+-    const float *features = features_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    const int *features_batch_cnt = features_batch_cnt_tensor.data<int>();
+-    const int *idx_batch_cnt = idx_batch_cnt_tensor.data<int>();
+-    float *out = out_tensor.data<float>();
++    const float *features = features_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    const int *features_batch_cnt = features_batch_cnt_tensor.data_ptr<int>();
++    const int *idx_batch_cnt = idx_batch_cnt_tensor.data_ptr<int>();
++    float *out = out_tensor.data_ptr<float>();
+ 
+     group_points_kernel_launcher_stack(B, M, C, nsample, features, features_batch_cnt, idx, idx_batch_cnt, out);
+     return 1;
+-}
+\ No newline at end of file
++}
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/interpolate.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/interpolate.cpp
+index 76135ee..5358120 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/interpolate.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/interpolate.cpp
+@@ -7,7 +7,7 @@ All Rights Reserved 2019-2020.
+ 
+ #include <torch/serialize/tensor.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -15,10 +15,8 @@ All Rights Reserved 2019-2020.
+ #include <cuda_runtime_api.h>
+ #include "interpolate_gpu.h"
+ 
+-extern THCState *state;
+-
+ #define CHECK_CUDA(x) do { \
+-  if (!x.type().is_cuda()) { \
++  if (!x.is_cuda()) { \
+     fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+     exit(-1); \
+   } \
+@@ -52,12 +50,12 @@ void three_nn_wrapper_stack(at::Tensor unknown_tensor,
+     int batch_size = unknown_batch_cnt_tensor.size(0);
+     int N = unknown_tensor.size(0);
+     int M = known_tensor.size(0);
+-    const float *unknown = unknown_tensor.data<float>();
+-    const int *unknown_batch_cnt = unknown_batch_cnt_tensor.data<int>();
+-    const float *known = known_tensor.data<float>();
+-    const int *known_batch_cnt = known_batch_cnt_tensor.data<int>();
+-    float *dist2 = dist2_tensor.data<float>();
+-    int *idx = idx_tensor.data<int>();
++    const float *unknown = unknown_tensor.data_ptr<float>();
++    const int *unknown_batch_cnt = unknown_batch_cnt_tensor.data_ptr<int>();
++    const float *known = known_tensor.data_ptr<float>();
++    const int *known_batch_cnt = known_batch_cnt_tensor.data_ptr<int>();
++    float *dist2 = dist2_tensor.data_ptr<float>();
++    int *idx = idx_tensor.data_ptr<int>();
+ 
+     three_nn_kernel_launcher_stack(batch_size, N, M, unknown, unknown_batch_cnt, known, known_batch_cnt, dist2, idx);
+ }
+@@ -77,10 +75,10 @@ void three_interpolate_wrapper_stack(at::Tensor features_tensor,
+ 
+     int N = out_tensor.size(0);
+     int channels = features_tensor.size(1);
+-    const float *features = features_tensor.data<float>();
+-    const float *weight = weight_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    float *out = out_tensor.data<float>();
++    const float *features = features_tensor.data_ptr<float>();
++    const float *weight = weight_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    float *out = out_tensor.data_ptr<float>();
+ 
+     three_interpolate_kernel_launcher_stack(N, channels, features, idx, weight, out);
+ }
+@@ -100,11 +98,11 @@ void three_interpolate_grad_wrapper_stack(at::Tensor grad_out_tensor, at::Tensor
+ 
+     int N = grad_out_tensor.size(0);
+     int channels = grad_out_tensor.size(1);
+-    const float *grad_out = grad_out_tensor.data<float>();
+-    const float *weight = weight_tensor.data<float>();
+-    const int *idx = idx_tensor.data<int>();
+-    float *grad_features = grad_features_tensor.data<float>();
++    const float *grad_out = grad_out_tensor.data_ptr<float>();
++    const float *weight = weight_tensor.data_ptr<float>();
++    const int *idx = idx_tensor.data_ptr<int>();
++    float *grad_features = grad_features_tensor.data_ptr<float>();
+     
+     // printf("N=%d, channels=%d\n", N, channels);
+     three_interpolate_grad_kernel_launcher_stack(N, channels, grad_out, idx, weight, grad_features);
+-}
+\ No newline at end of file
++}
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/sampling.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/sampling.cpp
+index c85e9df..52642d1 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/sampling.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/sampling.cpp
+@@ -1,13 +1,11 @@
+ #include <torch/serialize/tensor.h>
+ #include <ATen/cuda/CUDAContext.h>
+ #include <vector>
+-#include <THC/THC.h>
+ 
+ #include "sampling_gpu.h"
+ 
+-extern THCState *state;
+ #define CHECK_CUDA(x) do { \
+-  if (!x.type().is_cuda()) { \
++  if (!x.is_cuda()) { \
+     fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+     exit(-1); \
+   } \
+@@ -28,9 +26,9 @@ int furthest_point_sampling_wrapper(int b, int n, int m,
+     CHECK_INPUT(temp_tensor);
+     CHECK_INPUT(idx_tensor);
+ 
+-    const float *points = points_tensor.data<float>();
+-    float *temp = temp_tensor.data<float>();
+-    int *idx = idx_tensor.data<int>();
++    const float *points = points_tensor.data_ptr<float>();
++    float *temp = temp_tensor.data_ptr<float>();
++    int *idx = idx_tensor.data_ptr<int>();
+ 
+     furthest_point_sampling_kernel_launcher(b, n, m, points, temp, idx);
+     return 1;
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/vector_pool.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/vector_pool.cpp
+index b665de7..a407345 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/vector_pool.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/vector_pool.cpp
+@@ -10,15 +10,13 @@ All Rights Reserved 2020.
+ 
+ #include <torch/serialize/tensor.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include <cuda.h>
+ #include <cuda_runtime_api.h>
+ #include "vector_pool_gpu.h"
+ 
+-extern THCState *state;
+-
+ #define CHECK_CUDA(x) do { \
+-  if (!x.type().is_cuda()) { \
++  if (!x.is_cuda()) { \
+     fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+     exit(-1); \
+   } \
+@@ -55,13 +53,13 @@ int query_stacked_local_neighbor_idxs_wrapper_stack(at::Tensor support_xyz_tenso
+     CHECK_INPUT(start_len_tensor);
+     CHECK_INPUT(cumsum_tensor);
+ 
+-    const float *support_xyz = support_xyz_tensor.data<float>();
+-    const int *xyz_batch_cnt = xyz_batch_cnt_tensor.data<int>();
+-    const float *new_xyz = new_xyz_tensor.data<float>();
+-    const int *new_xyz_batch_cnt = new_xyz_batch_cnt_tensor.data<int>();
+-    int *stack_neighbor_idxs = stack_neighbor_idxs_tensor.data<int>();
+-    int *start_len = start_len_tensor.data<int>();
+-    int *cumsum = cumsum_tensor.data<int>();
++    const float *support_xyz = support_xyz_tensor.data_ptr<float>();
++    const int *xyz_batch_cnt = xyz_batch_cnt_tensor.data_ptr<int>();
++    const float *new_xyz = new_xyz_tensor.data_ptr<float>();
++    const int *new_xyz_batch_cnt = new_xyz_batch_cnt_tensor.data_ptr<int>();
++    int *stack_neighbor_idxs = stack_neighbor_idxs_tensor.data_ptr<int>();
++    int *start_len = start_len_tensor.data_ptr<int>();
++    int *cumsum = cumsum_tensor.data_ptr<int>();
+ 
+     int batch_size = xyz_batch_cnt_tensor.size(0);
+     int M = new_xyz_tensor.size(0);
+@@ -96,13 +94,13 @@ int query_three_nn_by_stacked_local_idxs_wrapper_stack(at::Tensor support_xyz_te
+     CHECK_INPUT(stack_neighbor_idxs_tensor);
+     CHECK_INPUT(start_len_tensor);
+ 
+-    const float *support_xyz = support_xyz_tensor.data<float>();
+-    const float *new_xyz = new_xyz_tensor.data<float>();
+-    const float *new_xyz_grid_centers = new_xyz_grid_centers_tensor.data<float>();
+-    int *new_xyz_grid_idxs = new_xyz_grid_idxs_tensor.data<int>();
+-    float *new_xyz_grid_dist2 = new_xyz_grid_dist2_tensor.data<float>();
+-    int *stack_neighbor_idxs = stack_neighbor_idxs_tensor.data<int>();
+-    int *start_len = start_len_tensor.data<int>();
++    const float *support_xyz = support_xyz_tensor.data_ptr<float>();
++    const float *new_xyz = new_xyz_tensor.data_ptr<float>();
++    const float *new_xyz_grid_centers = new_xyz_grid_centers_tensor.data_ptr<float>();
++    int *new_xyz_grid_idxs = new_xyz_grid_idxs_tensor.data_ptr<int>();
++    float *new_xyz_grid_dist2 = new_xyz_grid_dist2_tensor.data_ptr<float>();
++    int *stack_neighbor_idxs = stack_neighbor_idxs_tensor.data_ptr<int>();
++    int *start_len = start_len_tensor.data_ptr<int>();
+ 
+     query_three_nn_by_stacked_local_idxs_kernel_launcher_stack(
+         support_xyz, new_xyz, new_xyz_grid_centers,
+@@ -142,15 +140,15 @@ int vector_pool_wrapper_stack(at::Tensor support_xyz_tensor, at::Tensor xyz_batc
+     CHECK_INPUT(point_cnt_of_grid_tensor);
+     CHECK_INPUT(grouped_idxs_tensor);
+ 
+-    const float *support_xyz = support_xyz_tensor.data<float>();
+-    const float *support_features = support_features_tensor.data<float>();
+-    const int *xyz_batch_cnt = xyz_batch_cnt_tensor.data<int>();
+-    const float *new_xyz = new_xyz_tensor.data<float>();
+-    const int *new_xyz_batch_cnt = new_xyz_batch_cnt_tensor.data<int>();
+-    float *new_features = new_features_tensor.data<float>();
+-    float *new_local_xyz = new_local_xyz_tensor.data<float>();
+-    int *point_cnt_of_grid = point_cnt_of_grid_tensor.data<int>();
+-    int *grouped_idxs = grouped_idxs_tensor.data<int>();
++    const float *support_xyz = support_xyz_tensor.data_ptr<float>();
++    const float *support_features = support_features_tensor.data_ptr<float>();
++    const int *xyz_batch_cnt = xyz_batch_cnt_tensor.data_ptr<int>();
++    const float *new_xyz = new_xyz_tensor.data_ptr<float>();
++    const int *new_xyz_batch_cnt = new_xyz_batch_cnt_tensor.data_ptr<int>();
++    float *new_features = new_features_tensor.data_ptr<float>();
++    float *new_local_xyz = new_local_xyz_tensor.data_ptr<float>();
++    int *point_cnt_of_grid = point_cnt_of_grid_tensor.data_ptr<int>();
++    int *grouped_idxs = grouped_idxs_tensor.data_ptr<int>();
+ 
+     int N = support_xyz_tensor.size(0);
+     int batch_size = xyz_batch_cnt_tensor.size(0);
+@@ -190,14 +188,14 @@ int vector_pool_grad_wrapper_stack(at::Tensor grad_new_features_tensor,
+     int num_total_grids = point_cnt_of_grid_tensor.size(1);
+     int num_max_sum_points = grouped_idxs_tensor.size(0);
+ 
+-    const float *grad_new_features = grad_new_features_tensor.data<float>();
+-    const int *point_cnt_of_grid = point_cnt_of_grid_tensor.data<int>();
+-    const int *grouped_idxs = grouped_idxs_tensor.data<int>();
+-    float *grad_support_features = grad_support_features_tensor.data<float>();
++    const float *grad_new_features = grad_new_features_tensor.data_ptr<float>();
++    const int *point_cnt_of_grid = point_cnt_of_grid_tensor.data_ptr<int>();
++    const int *grouped_idxs = grouped_idxs_tensor.data_ptr<int>();
++    float *grad_support_features = grad_support_features_tensor.data_ptr<float>();
+ 
+     vector_pool_grad_kernel_launcher_stack(
+         grad_new_features, point_cnt_of_grid, grouped_idxs, grad_support_features,
+         N, M, num_c_out, num_c_in, num_total_grids, num_max_sum_points
+     );
+     return 1;
+-}
+\ No newline at end of file
++}
+diff --git a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/voxel_query.cpp b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/voxel_query.cpp
+index 430858f..922309d 100644
+--- a/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/voxel_query.cpp
++++ b/opencood/pcdet_utils/pointnet2/pointnet2_stack/src/voxel_query.cpp
+@@ -1,6 +1,6 @@
+ #include <torch/serialize/tensor.h>
+ #include <vector>
+-#include <THC/THC.h>
++#include <ATen/cuda/CUDAContext.h>
+ #include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -8,10 +8,8 @@
+ #include <cuda_runtime_api.h>
+ #include "voxel_query_gpu.h"
+ 
+-extern THCState *state;
+-
+ #define CHECK_CUDA(x) do { \
+-  if (!x.type().is_cuda()) { \
++  if (!x.is_cuda()) { \
+     fprintf(stderr, "%s must be CUDA tensor at %s:%d\n", #x, __FILE__, __LINE__); \
+     exit(-1); \
+   } \
+@@ -33,12 +31,12 @@ int voxel_query_wrapper_stack(int M, int R1, int R2, int R3, int nsample, float
+     CHECK_INPUT(new_xyz_tensor);
+     CHECK_INPUT(xyz_tensor);
+     
+-    const float *new_xyz = new_xyz_tensor.data<float>();
+-    const float *xyz = xyz_tensor.data<float>();
+-    const int *new_coords = new_coords_tensor.data<int>();
+-    const int *point_indices = point_indices_tensor.data<int>();
+-    int *idx = idx_tensor.data<int>();
++    const float *new_xyz = new_xyz_tensor.data_ptr<float>();
++    const float *xyz = xyz_tensor.data_ptr<float>();
++    const int *new_coords = new_coords_tensor.data_ptr<int>();
++    const int *point_indices = point_indices_tensor.data_ptr<int>();
++    int *idx = idx_tensor.data_ptr<int>();
+ 
+     voxel_query_kernel_launcher_stack(M, R1, R2, R3, nsample, radius, z_range, y_range, x_range, new_xyz, xyz, new_coords, point_indices, idx);
+     return 1;
+-}
+\ No newline at end of file
++}
+diff --git a/opencood/tools/pose_graph_pre_calc.py b/opencood/tools/pose_graph_pre_calc.py
+index 48dc83c..b815436 100644
+--- a/opencood/tools/pose_graph_pre_calc.py
++++ b/opencood/tools/pose_graph_pre_calc.py
+@@ -351,7 +351,11 @@ def _load_state_dict_with_spconv_fix(checkpoint_path):
+     state_dict = torch.load(checkpoint_path, map_location='cpu')
+     for key, value in list(state_dict.items()):
+         if isinstance(value, torch.Tensor) and value.ndim == 5:
+-            state_dict[key] = value.permute(3, 0, 1, 2, 4).contiguous()
++            # spconv 1.x checkpoints store weights as [kz, C_out, ky, kx, C_in]
++            # while spconv 2.x stores [C_out, kz, ky, kx, C_in]. Only permute
++            # when the first dimension looks like the kernel depth (<=4).
++            if value.shape[0] <= 4:
++                state_dict[key] = value.permute(1, 0, 2, 3, 4).contiguous()
+     return state_dict
+ 
+ 
+@@ -364,6 +368,7 @@ def export_stage1_boxes(prepared_hypes, splits, feature_cfg=None, max_samples=No
+     bev_feature_enabled = bool(bev_feature_cfg.get('enabled', False))
+     splits_list = _parse_splits(splits)
+     hypes = yaml_utils.load_voxel_params(prepared_hypes)
++    default_cav_label = str(prepared_hypes.get('force_ego_cav', 'ego'))
+ 
+     pos_std_list = [0]
+     rot_std_list = [0]
+@@ -475,6 +480,7 @@ def export_stage1_boxes(prepared_hypes, splits, feature_cfg=None, max_samples=No
+             stage1_boxes_save_path = os.path.join(stage1_boxes_save_dir, "stage1_boxes.json")
+ 
+             loader = loader_map[split]
++            dataset_obj = getattr(loader, 'dataset', None)
+             processed_split = 0
+             for i, batch_data in enumerate(loader):
+                 if max_samples is not None and processed_split >= max_samples:
+@@ -483,7 +489,32 @@ def export_stage1_boxes(prepared_hypes, splits, feature_cfg=None, max_samples=No
+                     continue
+ 
+                 batch_data = train_utils.to_device(batch_data, device)
+-                print(i, batch_data['ego']['sample_idx'], batch_data['ego']['cav_id_list'])
++                raw_sample_idx = batch_data['ego'].get('sample_idx')
++                sample_idx = None
++                if raw_sample_idx is not None:
++                    if isinstance(raw_sample_idx, (list, tuple)):
++                        if raw_sample_idx:
++                            sample_idx = raw_sample_idx[0]
++                    elif torch.is_tensor(raw_sample_idx):
++                        sample_idx = raw_sample_idx.detach().cpu().item()
++                    else:
++                        sample_idx = raw_sample_idx
++                if sample_idx is None:
++                    sample_idx = i
++                sample_idx_str = str(sample_idx)
++                cav_id_list = batch_data['ego'].get('cav_id_list')
++                if not cav_id_list:
++                    cav_id_list = [default_cav_label]
++                veh_frame_id = None
++                infra_frame_id = None
++                if dataset_obj is not None and hasattr(dataset_obj, 'split_info'):
++                    if i < len(dataset_obj.split_info):
++                        veh_frame_id = str(dataset_obj.split_info[i])
++                        frame_info = getattr(dataset_obj, 'co_data', {}).get(veh_frame_id, {})
++                        infra_path = frame_info.get('infrastructure_image_path')
++                        if infra_path:
++                            infra_frame_id = infra_path.split('/')[-1].split('.')[0]
++                print(i, sample_idx_str, cav_id_list)
+                 output_stage1 = stage1_model(batch_data['ego'])
+                 if isinstance(output_stage1, dict) and 'unc_preds' not in output_stage1:
+                     cls_preds_tensor = output_stage1.get('cls_preds')
+@@ -515,11 +546,19 @@ def export_stage1_boxes(prepared_hypes, splits, feature_cfg=None, max_samples=No
+                         bev_feature_entries = bev_chunks[0]
+ 
+                 if SAVE_BOXES:
+-                    sample_idx = batch_data['ego']['sample_idx']
+                     pred_corner3d_np_list = [x.cpu().numpy().tolist() for x in pred_corner3d_list]
+                     uncertainty_np_list = [x.cpu().numpy().tolist() for x in uncertainty_list]
+-                    lidar_pose_clean_np = batch_data['ego']['lidar_pose_clean'].cpu().numpy().tolist()
+-                    stage1_boxes_dict[sample_idx] = OrderedDict()
++                    lidar_pose_clean_tensor = batch_data['ego'].get('lidar_pose_clean')
++                    if lidar_pose_clean_tensor is None:
++                        lidar_pose_clean_tensor = batch_data['ego'].get('lidar_pose')
++                    if lidar_pose_clean_tensor is None:
++                        lidar_pose_clean_tensor = torch.zeros(
++                            (len(pred_corner3d_list), 6), dtype=torch.float32, device=device
++                        )
++                    else:
++                        lidar_pose_clean_tensor = torch.as_tensor(lidar_pose_clean_tensor, dtype=torch.float32)
++                    lidar_pose_clean_np = lidar_pose_clean_tensor.detach().cpu().numpy().tolist()
++                    stage1_boxes_dict[sample_idx_str] = OrderedDict()
+ 
+                     detection_with_descriptor = None
+                     if runtime_store and bev_feature_cfg.get('attach_detection'):
+@@ -531,11 +570,13 @@ def export_stage1_boxes(prepared_hypes, splits, feature_cfg=None, max_samples=No
+                         )
+                     detections_to_store = detection_with_descriptor or pred_corner3d_np_list
+ 
+-                    stage1_boxes_dict[sample_idx]['pred_corner3d_np_list'] = detections_to_store
+-                    stage1_boxes_dict[sample_idx]['uncertainty_np_list'] = uncertainty_np_list
+-                    stage1_boxes_dict[sample_idx]['lidar_pose_clean_np'] = lidar_pose_clean_np
+-                    stage1_boxes_dict[sample_idx]['cav_id_list'] = batch_data['ego']['cav_id_list']
+-                    stage1_boxes_dict[sample_idx]['bev_range'] = cav_lidar_range
++                    stage1_boxes_dict[sample_idx_str]['pred_corner3d_np_list'] = detections_to_store
++                    stage1_boxes_dict[sample_idx_str]['uncertainty_np_list'] = uncertainty_np_list
++                    stage1_boxes_dict[sample_idx_str]['lidar_pose_clean_np'] = lidar_pose_clean_np
++                    stage1_boxes_dict[sample_idx_str]['cav_id_list'] = cav_id_list
++                    stage1_boxes_dict[sample_idx_str]['bev_range'] = cav_lidar_range
++                    stage1_boxes_dict[sample_idx_str]['veh_frame_id'] = veh_frame_id
++                    stage1_boxes_dict[sample_idx_str]['infra_frame_id'] = infra_frame_id
+                     combined_features = None
+                     if feature_entries:
+                         combined_features = [list(boxes) for boxes, _ in feature_entries]
+@@ -549,12 +590,12 @@ def export_stage1_boxes(prepared_hypes, splits, feature_cfg=None, max_samples=No
+                         for cav_idx, bev_boxes in enumerate(bev_feature_entries):
+                             combined_features[cav_idx].extend(bev_boxes)
+                     if combined_features:
+-                        stage1_boxes_dict[sample_idx]['feature_corner3d_np_list'] = combined_features
++                        stage1_boxes_dict[sample_idx_str]['feature_corner3d_np_list'] = combined_features
+                     if runtime_store and runtime_store.get('occ_map_list'):
+                         occ_tensor_list = runtime_store['occ_map_list']
+                         if occ_tensor_list:
+                             occ_level0 = occ_tensor_list[0].detach().cpu().numpy().tolist()
+-                            stage1_boxes_dict[sample_idx]['occ_map_level0'] = occ_level0
++                            stage1_boxes_dict[sample_idx_str]['occ_map_level0'] = occ_level0
+                     processed_split += 1
+ 
+             if SAVE_BOXES:

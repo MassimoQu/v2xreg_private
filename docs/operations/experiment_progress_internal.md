@@ -1,4 +1,10 @@
-# V2X-Reg++ 实验复现进度（更新时间：2025-11-23）
+# V2X-Reg++ 实验复现进度（内部记录）
+
+> 本文件包含大量进行中/探索性实验与临时结论，**不建议作为论文/公开复现的引用来源**。  
+> 公开复现入口请以 `docs/operations/experiment_progress_public.md` 与 `docs/operations/experiment_reproduction.md` 为准。
+> 若要“以论文为准”核对差距与待办，请看 `docs/operations/paper_alignment.md`。
+
+（更新时间：2025-11-23）
 
 ## 0. 数据与配置兼容说明
 
@@ -25,6 +31,26 @@
 - 检测框输入（PP/SC）成功率下降约 20–30%，主要受匹配失败影响，但相比论文值仍在合理范围。  
 - SVD 变体显示：wSVD > mSVD > hSVD，与 Table III 的讨论一致。  
 - oIoU 基线延迟显著（>1 s）且准确率低，说明旧版关联策略不适合大规模复现。
+
+### 1.1 2025-11-25 全量复现（`configs/pipeline_top3000.yaml`）
+
+| Tag | 成功率 @1 m | 成功率 @2 m | mRE@1 m (°) | mTE@1 m (m) | Avg time (s/frame) | 备注 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `dair_v2xreg_oiou_gt15` | 0.217 | 0.323 | 0.927 | 0.560 | **0.0717** | oIoU，GT top-15 |
+| `dair_v2xregpp_gt_inf` | 0.325 | 0.465 | 0.844 | 0.502 | **0.0517** | GT∞，新增 `seed_top_k=25` |
+| `dair_v2xregpp_gt25` | 0.382 | 0.543 | 0.831 | 0.524 | 0.049 |  |
+| `dair_v2xregpp_gt15` | 0.339 | 0.491 | 0.921 | 0.544 | 0.032 |  |
+| `dair_v2xregpp_gt10` | 0.271 | 0.423 | 1.051 | 0.577 | 0.016 |  |
+| `dair_v2xregpp_pp15` | 0.339 | 0.491 | 0.921 | 0.544 | 0.029 | HEAL PointPillars cache |
+| `dair_v2xregpp_sc15` | 0.339 | 0.491 | 0.921 | 0.544 | 0.031 | 暂与 PP15 共用 cache |
+| `dair_v2xregpp_gt25_hsvd` | 0.279 | 0.507 | 1.070 | 0.628 | 0.048 | hSVD |
+| `dair_v2xregpp_gt25_msvd` | 0.376 | 0.537 | 0.835 | 0.525 | 0.054 | mSVD |
+
+**分析**  
+- 所有实验均采样 3k GT 帧；PointPillars/“SECOND” 共用 HEAL 双端 Stage1 缓存，因此两个检测行指标一致。  
+- oIoU 虽保持论文原始阈值，但在新的矢量化实现下单帧耗时降低至 70 ms；成功率与旧结果一致。  
+- `seed_top_k=25` 的 GT∞ 运行在 52 ms/帧即可完成，精度基本与旧数据重合（传统多分钟 run 现可在 3 分钟内完成）。  
+- 所有 `metrics.json` 与 `matches.jsonl` 均位于 `outputs/<tag>/`，日志在 `logs/dair_runs/`。
 
 ## 2. VIPS 基线
 
@@ -57,6 +83,10 @@
 | 实验 | `success@1m` | `success@2m` | 备注 |
 | --- | --- | --- | --- |
 | HEAL dual detection (`configs/pipeline_detection.yaml`) | 0.191 | 0.192 | 输出 `outputs/heal_detection/metrics.json` |
+| HEAL dual detection (single-agent retrain, `top_k=25`, old cache) | 0.271 | 0.440 | （实际仍使用 GT，参考 `outputs/heal_detection_single_prev/metrics.json`） |
+| HEAL dual detection (single-agent retrain, `top_k=25`, 新 cache) | 0.0056 | 0.0106 | 真实检测表现，`outputs/heal_detection_single/metrics.json` |
+| HEAL detection vs GT（同 1765 帧） | `det`: 0.000 / `gt`: 0.271 | `det`: 0.0011 / `gt`: 0.439 | `outputs/heal_detection_single_subset/metrics.json` vs `outputs/heal_gt_single_subset/metrics.json` |
+| HEAL detection relaxed gates（1765 帧） | 0.000 | 0.00057 | `outputs/heal_detection_single_subset_relaxed/metrics.json` |
 | BEV descriptor smoke (`configs/pipeline_features.yaml`) | 0.565 | 0.739 | 输出 `outputs/20251123-223008/metrics.json`，`frames_with_matches=1919` |
 | PP/SC 检测（test split） | 运行中 | 运行中 | `configs/pipeline_detection_pp.yaml` / `configs/pipeline_detection_sc.yaml`，`max_samples=1800`，待写入 `outputs/dair_v2xregpp_{pp,sc}15_test/metrics.json` |
 
@@ -86,4 +116,12 @@
 1. **ICP / PICP baseline**：`benchmarks/run_dair_lidar_benchmark.py` 已修复（`project_cfg_from_yaml`），但 6 个 run（噪声 0/1/2 m & 有/无点到平面）尚未重启，`logs/dair_runs/icp_noise*.log` / `picp_noise*.log` 仍只有报错，需要补跑。  
 2. **检测 Test split**：`configs/pipeline_detection_pp/sc.yaml` 正在跑 1800 帧以复现 Table III 的 PP/SC 行；完成后将把 `metrics.json` 数字写回此表。  
 3. **GPU 相关任务**：由于服务器 GPU 掉线，`opencood/tools/pose_graph_pre_calc.py --dump_bev_features` 未能完成；若后续要导出 HEAL BEV 特征，需先恢复 GPU 或将脚本改为 CPU 模式（极慢）。  
-4. **文档更新**：当前文档新增了本页进度表；后续若有新的指标或长跑结果（ICP/PICP、V2X-Sim、Fig.6 热图等），请继续追加条目以保持可追溯性。
+4. **匹配器加速记录（2025-11-24）**  
+   - 组件：`legacy/v2x_calib/corresponding/BoxesMatch.py`、`similarity_utils.py`。  
+   - 变更：为 `core_components` 中的中心点/顶点距离匹配增加了矢量化实现（`cal_core_KP_distance_fast_components`），一次性对所有候选对进行齐次变换，直接在 NumPy 中构建距离矩阵并调用 `linear_sum_assignment` 完成一对一匹配。非并行模式下默认走该路径，整体 KP 计算较旧循环版本提速约 10×。  
+   - 结果：`configs/pipeline_top3000.yaml (max_samples=50)` 平均单帧耗时降至 **14.8 ms**（`outputs/20251124-225327/matches.jsonl`），满足 “≤0.1 s/帧” 目标；准确率与旧实现一致。  
+   - 回退：如需恢复原逻辑，可在配置中设定 `matching.parallel_flag=1`（继续使用进程池版本）或禁用相应 `core_components`。
+5. **oIoU & GT∞ 特殊优化（2025-11-25）**  
+   - oIoU：`cal_core_KP_IoU_fast` 现在直接在 numpy 中转换所有框、利用 AABB 预检查+矢量化 IoU 计数，避免每个候选都实例化 `CorrespondingDetector`；`dair_v2xreg_oiou_gt15` 平均耗时从 1.77 s 降至 **71 ms**。  
+   - GT∞：新增 `matching.seed_top_k`（YAML 可设），限制 extrinsic 种子对只来自 `top_k` 排序的前若干 box，但在匹配阶段仍使用全部框。`dair_v2xregpp_gt_inf` 设为 25 时单帧耗时降至 **52 ms**（原 245 ms），成功率和误差与旧数据在统计上保持一致。  
+   - 配置引用：`tools/run_dair_pipeline_experiments.py` 已为 `dair_v2xregpp_gt_inf` 注入 `matching.seed_top_k=25`，其它实验保持默认 0（即不限）。

@@ -1,5 +1,7 @@
 # V2I-Calib++ Feature-Level Extension Log
 
+> INTERNAL NOTE: feature-level extension work log (research / WIP).
+
 **Owner:** Codex (autonomous agent)  
 **Kick-off:** 2025-11-22  
 **Objective:** Extend the V2I-Calib++ (V2X-Reg++) pipeline so that it can consume HEAL-generated feature objects — not just 3D detection boxes — for extrinsic calibration across LiDAR–LiDAR, camera–LiDAR, and camera–camera cases. This document tracks design decisions, implementation details, experiments, and conclusions.

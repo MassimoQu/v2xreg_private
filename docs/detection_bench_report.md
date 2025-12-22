@@ -1,5 +1,7 @@
 # DAIR-V2X 检测框 Benchmark 汇总（P2 阶段）
 
+> INTERNAL NOTE: this file captures exploratory detection-cache debugging and may not match the paper’s reported detector baselines. Do not cite it as a public reproduction reference.
+
 日期：2025-11-22  
 配置：`configs/pipeline_detection.yaml`（use_detection=true, max_samples=1000, data_info=data/DAIR-V2X/cooperative/.../data_info.json，过滤/匹配与 GT 版本一致），输出脚本：`tools/run_detection_bench.py`
 

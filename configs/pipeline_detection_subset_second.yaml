@@ -3,7 +3,7 @@ data:
   split: test
   data_info_path: data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info_detection1765.json
   data_root: data/DAIR-V2X/cooperative-vehicle-infrastructure
-  detection_cache: data/DAIR-V2X/detected/veh_rsu_dual_ft_detection_cache.json
+  detection_cache: data/DAIR-V2X/detected/veh_rsu_dual_m2_second_detection_cache.json
   use_detection: true
   noise:
     pos_std: 0
@@ -43,4 +43,4 @@ evaluation:
   time_verbose: false
 output:
   root_dir: outputs
-  tag: heal_detection_single_subset
+  tag: heal_detection_second_subset

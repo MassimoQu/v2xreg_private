@@ -47,36 +47,7 @@ class ObjectLevelPipeline:
         if stability < gate or TE > max_thr or T6 is None:
             self._prior_T = None
             return
-            self._prior_T = convert_6DOF_to_T(T6)
-
-    def _estimate_occ_hint(self, sample: CalibrationSample):
-        if not sample.occ_maps:
-            return None
-        occ_maps = sample.occ_maps
-        if len(occ_maps) < 2:
-            return None
-
-        def _squeeze_map(raw):
-            arr = np.asarray(raw, dtype=np.float32)
-            if arr.ndim >= 3:
-                arr = arr.squeeze()
-            return arr
-
-        occ_infra = _squeeze_map(occ_maps[0])
-        occ_veh = _squeeze_map(occ_maps[1])
-        if occ_infra.size == 0 or occ_veh.size == 0:
-            return None
-        H, W = occ_infra.shape[-2], occ_infra.shape[-1]
-        Fa = np.fft.fft2(occ_infra)
-        Fb = np.fft.fft2(occ_veh)
-        corr = np.fft.ifft2(Fa * np.conj(Fb))
-        corr = np.abs(np.fft.fftshift(corr))
-        peak = np.unravel_index(np.argmax(corr), corr.shape)
-        shift_y = peak[0] - H // 2
-        shift_x = peak[1] - W // 2
-        resolution = 0.5  # meters per pixel (approx)
-        offset = np.array([shift_x * resolution, shift_y * resolution, 0.0, 0.0, 0.0, 0.0])
-        return convert_6DOF_to_T(offset)
+        self._prior_T = convert_6DOF_to_T(T6)
 
     def run(self) -> Dict[str, float]:
         output_dir = self._prepare_output_dir()

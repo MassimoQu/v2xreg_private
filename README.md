@@ -27,9 +27,9 @@
 
 </div> -->
 
-[![Calibration Quality Comparison Video](static/visuals/thumbnail_merged.png)](https://github.com/MassimoQu/v2i-calib/blob/main/static/visuals/merged_output.mp4)
+Video demo: https://github.com/MassimoQu/v2i-calib/blob/main/static/visuals/merged_output.mp4
 
-This visualization (`static/visuals/merged_output.mp4`) compares the bounding boxes (obtained via PointPillars on DAIR-V2X) after registration using extrinsic parameters from V2X-Reg++ (left) versus the official DAIR dataset parameters (right). The point cloud overlay demonstrates the improved alignment accuracy achieved by our method.
+This visualization compares the bounding boxes (obtained via PointPillars on DAIR-V2X) after registration using extrinsic parameters from V2X-Reg++ (left) versus the official DAIR dataset parameters (right). The point cloud overlay demonstrates the improved alignment accuracy achieved by our method.
 
 ## Highlight
 
@@ -68,11 +68,14 @@ The configs used in the paper are bundled under `configs/`. Each experiment can 
 
 - **DAIR-V2X LiDAR (GT boxes, single-pair calibration).**  
   `python tools/run_calibration.py --config configs/pipeline.yaml --print`  
-  Requires DAIR-V2X metadata plus ground-truth boxes packaged by `tools/dair_to_calib_cache.py`.
+  Requires the official DAIR-V2X cooperative split under `data/DAIR-V2X/` (or a symlink; see `docs/operations/experiment_reproduction.md`).
+
+- **DAIR-V2X Table III (Top-3000 GT sweeps).**  
+  `python tools/run_dair_pipeline_experiments.py --config configs/pipeline_top3000.yaml`
 
 - **DAIR-V2X LiDAR (HEAL detections, no priors).**  
   `python tools/run_calibration.py --config configs/pipeline_detection.yaml --print`  
-  Uses detection caches from HEAL stage-1; see `docs/operations/experiment_reproduction.md` for download links.
+  Requires a detection cache (e.g. exported from HEAL stage-1); see `docs/operations/experiment_reproduction.md` for cache format + conversion tools.
 
 - **HKUST multi-agent LiDAR benchmark.**  
   `python tools/run_calibration.py --config configs/pipeline_hkust.yaml --print`  

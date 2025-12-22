@@ -1,6 +1,3 @@
-[submodule "LiDAR-Registration-Benchmark"]
-	path = benchmarks/third_party/LiDAR-Registration-Benchmark
-	url = https://github.com/HKUST-Aerial-Robotics/LiDAR-Registration-Benchmark.git
 [submodule "benchmarks/third_party/CBM"]
 	path = benchmarks/third_party/CBM
 	url = https://github.com/zhyingS/CBM.git

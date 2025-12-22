@@ -1,7 +1,8 @@
 data:
   dataset: DAIR-V2X
   split: test
-  data_info_path: data/DAIR-V2X/cooperative/test_data_info.json
+  # NOTE: the detection cache is expected to be index-aligned with this data_info list.
+  data_info_path: data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info.json
   data_root: data/DAIR-V2X/cooperative-vehicle-infrastructure
   detection_cache: data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json
   use_detection: true

@@ -1,5 +1,7 @@
 # DAIR-V2X 对比测试记录（HKUST Benchmark vs V2X-Reg++）
 
+> 说明：本文件是复现实验记录。`outputs/` 下的结果文件 **不随仓库发布**（见 `.gitignore`），请按文中命令自行运行生成；第三方基线依赖子模块与额外编译步骤（TEASER++ Python 绑定等）。
+
 ## 1. 环境准备
 
 - 在 `benchmarks/third_party/TEASER-plusplus` 下拉取源码，并安装 Python 绑定：

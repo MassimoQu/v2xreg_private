@@ -29,6 +29,7 @@ EXPERIMENTS: List[Dict] = [
         'description': 'V2X-Reg++ with GT boxes, keep all boxes',
         'overrides': {
             'filters.top_k': 0,
+            'matching.seed_top_k': 25,
         },
     },
     {
@@ -100,16 +101,31 @@ def apply_overrides(cfg, overrides: Dict[str, object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Run DAIR-V2X pipeline experiments sequentially.')
-    parser.add_argument('--config', default='configs/pipeline.yaml', help='Base pipeline config path.')
+    parser.add_argument(
+        '--config',
+        default='configs/pipeline_top3000.yaml',
+        help='Base pipeline config path (recommended: configs/pipeline_top3000.yaml for Table III GT sweeps).',
+    )
     parser.add_argument(
         '--tags',
         nargs='*',
         help='Optional subset of experiment tags to run. Defaults to all configured experiments.',
     )
+    parser.add_argument(
+        '--include-detection',
+        action='store_true',
+        help='Also run detection-cache baselines (requires a compatible detection cache + data_info alignment).',
+    )
     args = parser.parse_args()
 
     results = {}
     selected = [exp for exp in EXPERIMENTS if not args.tags or exp['tag'] in args.tags]
+    if not args.include_detection:
+        selected = [
+            exp
+            for exp in selected
+            if not bool(exp.get('overrides', {}).get('data.use_detection'))
+        ]
     for exp in selected:
         cfg = load_config(args.config)
         apply_overrides(cfg, {'output.tag': exp['tag']})
@@ -122,7 +138,10 @@ def main() -> None:
 
     print('\nAll experiments completed:')
     for tag, summary in results.items():
-        print(f"- {tag}: {summary.get('mRRE@1.0', 0):.3f} deg, {summary.get('mRTE@1.0', 0):.3f} m")
+        succ1 = summary.get('success_at_1m')
+        succ2 = summary.get('success_at_2m')
+        avg_time = summary.get('avg_time')
+        print(f"- {tag}: success@1m={succ1} success@2m={succ2} avg_time={avg_time}")
 
 
 if __name__ == '__main__':

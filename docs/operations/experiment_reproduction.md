@@ -1,6 +1,6 @@
 # V2X-Reg++ Experiment Reproduction Guide
 
-This note explains how to reproduce every experiment that appears in `static/V2X_Calib_TITS_pdfLaTeX2023_compiled.pdf`, i.e. Tables II–III and Figures 6–9, with the code that already lives in this repository (plus the third-party submodules under `benchmarks/`). The instructions assume you stay inside the repository root (`/mnt/ssd_gw/v2i-calib`).
+This note explains how to reproduce the main experiments (Tables II–III and Figures 6–9) with the code in this repository (plus the third-party submodules under `benchmarks/`). Paths below are relative to the repository root. For the minimal public entrypoint, see `docs/operations/experiment_progress_public.md`.
 
 ## 1. Environment and Dependencies
 
@@ -8,14 +8,19 @@ This note explains how to reproduce every experiment that appears in `static/V2X
    ```bash
    conda create -n v2xreg python=3.10 -y
    conda activate v2xreg
-   pip install numpy scipy pyquaternion shapely open3d==0.17.* pyyaml easydict tqdm torch==2.3.* cupy-cuda12x
+   pip install -r requirements.txt
+   # Optional (baselines under `benchmarks/`)
+   pip install open3d==0.17.* torch==2.3.*
    ```
    `benchmarks/run_cbm_benchmark.py` relies on PyTorch, SciPy and Open3D, while `calib` itself only needs NumPy/SciPy/PyQuaternion.
 
-2. **TEASER++** (used by HKUST/Quatro/FGR baselines, Table II & Table III): follow the build recipe in `docs/operations/hkust_vs_v2icalib_report.md:1-58`. In short:
+2. **Submodules**
    ```bash
-   git clone https://github.com/MIT-SPARK/TEASER-plusplus.git benchmarks/third_party/TEASER-plusplus
-   git clone --depth 1 --branch 3.4.0 https://gitlab.com/libeigen/eigen.git benchmarks/third_party/eigen
+   git submodule update --init --recursive
+   ```
+
+3. **TEASER++** (used by HKUST/Quatro/FGR baselines, Table II & Table III): follow the build recipe in `docs/operations/hkust_vs_v2icalib_report.md`. In short:
+   ```bash
    cmake -S benchmarks/third_party/eigen -B benchmarks/third_party/eigen/build -DCMAKE_INSTALL_PREFIX=benchmarks/third_party/eigen/install
    cmake --build benchmarks/third_party/eigen/build && cmake --install benchmarks/third_party/eigen/build
    CMAKE_ARGS="-DEigen3_DIR=$(pwd)/benchmarks/third_party/eigen/install/share/eigen3/cmake -DBUILD_PYTHON_BINDINGS=ON -DCMAKE_BUILD_TYPE=Release" \
@@ -23,9 +28,9 @@ This note explains how to reproduce every experiment that appears in `static/V2X
    ```
    Make sure `teaserpp_python` imports in the same virtualenv as `open3d`.
 
-3. **CBM third-party module** (`benchmarks/third_party/CBM`) is pulled as part of this repo; only `torch` and `numpy` are required.
+4. **CBM third-party module** (`benchmarks/third_party/CBM`) is a submodule; only `torch` and `numpy` are required.
 
-4. **HEAL** (for detector-driven experiments) already ships in `HEAL/`. Install its dependencies if you plan to regenerate detection caches:
+5. **HEAL** (optional, for detector-driven experiments) ships as a submodule under `HEAL/`. Install its dependencies if you plan to regenerate detection caches:
    ```bash
    pip install -r HEAL/requirements.txt
    pip install spconv-cu122  # pick the wheel that matches your CUDA
@@ -35,32 +40,48 @@ This note explains how to reproduce every experiment that appears in `static/V2X
 
 ### 2.1 DAIR-V2X ground truth
 
-Place the official DAIR-V2X cooperative split under `data/DAIR-V2X/` following the tree that the repo already expects (`cooperative-vehicle-infrastructure/cooperative/data_info.json`). The new pipeline (`calib/data/dataset_manager.py`) pulls file paths from `data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info.json` by default, so no further conversion is needed.
+Place the official DAIR-V2X cooperative split under `data/DAIR-V2X/` following the expected tree:
+- `data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info.json`
+
+If you keep the dataset elsewhere, create a symlink:
+```bash
+ln -s /path/to/cooperative-vehicle-infrastructure data/DAIR-V2X/cooperative-vehicle-infrastructure
+```
+The pipeline reads paths from `data_info.json`, so no extra conversion is required.
 
 ### 2.2 Detection caches
 
-* **PointPillars (PP)**: already stored as `data/DAIR-V2X/detected/detected_boxes_test.json`.
-* **SECOND (SC)**: `data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json`.
-* **HEAL dual-agent export**: convert any pair of HEAL stage-1 logs with `tools/heal_stage1_to_detection_cache.py`, see `docs/operations/heal_detection_status.md`.
+Detection caches are **not tracked by git** (see `.gitignore`). Example locations:
+* **PointPillars (PP)**: `data/DAIR-V2X/detected/detected_boxes_test.json`
+* **SECOND (SC)**: `data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json`
+* **HEAL stage-1 export**: convert HEAL `stage1_boxes.json` with `tools/heal_stage1_to_detection_cache.py` (see `docs/operations/heal_detection_status.md`).
 
-All three files follow the format expected by `calib/data/detection_adapter.py`, i.e. a dictionary keyed by frame indices with `pred_corner3d_np_list` entries. Set `data.use_detection=true` and point `data.detection_cache` to the desired JSON when running Box-detection experiments.
+The expected schema is a dict keyed by frame index with `pred_corner3d_np_list` entries. For reliable alignment, include `infra_frame_id` / `veh_frame_id` in each record (HEAL converter supports this); otherwise the cache is assumed to be index-aligned with the `data_info.json` list.
 
 ### 2.3 V2X-Set cooperative simulation data
 
-All “simulation” experiments now run on UCLA Mobility Lab’s V2X-Set release instead of the legacy V2X-Sim pickles. The dataset lives under `/mnt/ssd_gw/cooperative-vehicle-infrastructure/v2xset` with the original `train/validate/test/<scenario>/<agent>/000xxx.{yaml,pcd,png}` layout expected by OpenCOOD/HEAL. If you need to access it from a different machine account, create a symlink that mirrors the same tree:
+All “simulation” experiments run on UCLA Mobility Lab’s V2X-Set release (directory layout: `train/validate/test/<scenario>/<agent>/000xxx.{yaml,pcd,png}`).
+If needed, create a convenient symlink:
 ```bash
-ln -s /mnt/ssd_gw/cooperative-vehicle-infrastructure/v2xset ~/v2xset
+ln -s /path/to/v2xset ~/v2xset
 ```
 
 The repo ships a `legacy/v2x_calib/reader/V2XSet_Reader` helper that understands this directory structure as well as a V2X-Set specific HKUST config at `configs/hkust_v2xset_config.yaml`. All the scripts mentioned below accept `--v2xset-root` / `--split` overrides if you need to point them to another copy.
 
 ## 3. DAIR-V2X experiments (Table III)
 
-All V2X-Reg / V2X-Reg++ numbers in Table III come from the object-level pipeline defined in `calib/pipelines/object_level.py` and configured by `configs/pipeline*.yaml`. Run:
+All V2X-Reg / V2X-Reg++ numbers in Table III come from the object-level pipeline defined in `calib/pipelines/object_level.py` and configured by `configs/pipeline*.yaml`.
+
+For the **Table III GT sweeps** (Top-3000 subset), run:
 ```bash
-python tools/run_calibration.py --config configs/pipeline.yaml --print
+python tools/run_dair_pipeline_experiments.py --config configs/pipeline_top3000.yaml
 ```
-Key knobs (all live inside `configs/pipeline.yaml` unless stated otherwise):
+Or run a single config:
+```bash
+python tools/run_calibration.py --config configs/pipeline_top3000.yaml --print
+```
+
+Key knobs (all live inside `configs/pipeline*.yaml` unless stated otherwise):
 
 | Paper setting | How to configure it |
 | --- | --- |
@@ -71,11 +92,11 @@ Key knobs (all live inside `configs/pipeline.yaml` unless stated otherwise):
 | Weighted vs mean vs “highest” SVD (wSVD/mSVD/hSVD) | wSVD is the default (`matching.matches2extrinsic: weightedSVD`). mSVD = set `matching.matches2extrinsic: evenSVD`. hSVD = keep wSVD but change `matching.filter_strategy: topRetained` so only the highest-score pair is fed to SVD. |
 | Using detections vs GT boxes | toggle `data.use_detection`. When it is `false`, GT boxes from DAIR-V2X are used. |
 
-Every run writes `outputs/<tag>/metrics.json` with the `mRRE@λ`, `mRTE@λ` and `success@λ` metrics that appear in Table III, along with `matches.jsonl` (per-frame RE/TE, stability and timing). Adjust `output.tag` in the config to keep runs separate.
+Every run writes `outputs/<tag>/metrics.json` with `success_at_{λ}m`, `mRE@{λ}m`, `mTE@{λ}m` and timing summaries, along with `matches.jsonl` (per-frame RE/TE, stability and timing). Adjust `output.tag` in the config to keep runs separate.
 
 ### 3.1 HEAL detections (Table III rows with `PP`/`SC`)
 
-Use `configs/pipeline_detection.yaml`. It already loads `data/DAIR-V2X/detected/heal_stage1_dual_detection_cache.json` and sets `solver.stability_gate=3` to mimic the “stability guided” runs discussed in the paper. Command:
+Detection-driven runs are optional. Use `configs/pipeline_detection.yaml` as a starting point, set `data.use_detection=true`, and point `data.detection_cache` to your cache file. Command:
 ```bash
 python tools/run_calibration.py --config configs/pipeline_detection.yaml
 ```
@@ -127,11 +148,13 @@ Variants:
 * `--identity-init` + `--skip-icp` / default for the “no initial value” rows.
 * `--use-prediction` if you want to switch from GT boxes to detections.
 
-## 4. V2X-Set experiments (Table II analogue)
+## 4. V2X-Set experiments (optional)
+
+The original paper Table II uses V2X-Sim. During the refactor, we also ran a compatible “simulation-style” evaluation on V2X-Set to validate the new pipeline wiring. Treat this section as an **optional** reproduction path; numbers may differ from the paper due to dataset differences.
 
 See Section 2.3 for the dataset layout and the new helper reader/configs. Table II is now reproduced with the following components:
 
-* **HKUST baselines** – run `benchmarks/hkust_lidar_global_registration_benchmark.py --config configs/hkust_v2xset_config.yaml` with `--rotation-alg {GNC_TLS,FGR,QUATRO}` and `--max-pairs 20`. Metrics for Teaser++/FGR/Quatro are saved in `outputs/hkust_teaser/v2xset_*`. All three methods reported `success@{1…5 m}=0` on V2X-Set despite ICP refinement; average runtimes were 5.8 s (Teaser++), 8.2 s (FGR) and 8.5 s (Quatro).
+* **HKUST baselines** – run `benchmarks/hkust_lidar_global_registration_benchmark.py --config configs/hkust_v2xset_config.yaml` with `--rotation-alg {GNC_TLS,FGR,QUATRO}` and `--max-pairs 20`. Metrics are saved under `outputs/` with your chosen tag.
 * **V2X-Reg++ (oDist)** – `tools/run_v2xset_object_eval.py` mimics `ObjectLevelPipeline` while sampling cooperative pairs from V2X-Set. Example:
   ```bash
   PYTHONPATH=. python tools/run_v2xset_object_eval.py \
@@ -165,7 +188,7 @@ The HKUST baselines consistently diverged on V2X-Set (all success metrics zero) 
 
 | Item | Value |
 | --- | --- |
-| Dataset split | `validate/` from `/mnt/ssd_gw/cooperative-vehicle-infrastructure/v2xset` |
+| Dataset split | `validate/` from your V2X-Set root (e.g. `~/v2xset`) |
 | Sampling stride | `frame_stride=20` (object-level) / `10` (HKUST config) unless noted |
 | Max CAVs per scenario | 3 (keeps runtime manageable, mirrors DAIR pair counts) |
 | Object-level pairs | `max_pairs=200` for oDist, `60` for IoU runs (SVD stability) |

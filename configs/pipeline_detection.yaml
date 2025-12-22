@@ -3,14 +3,14 @@ data:
   split: test
   data_info_path: data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info.json
   data_root: data/DAIR-V2X/cooperative-vehicle-infrastructure
-  detection_cache: data/DAIR-V2X/detected/heal_stage1_dual_detection_cache.json
+  detection_cache: data/DAIR-V2X/detected/detected_boxes_test.json
   use_detection: true
   noise:
     pos_std: 0
     rot_std: 0
   max_samples: 1800
 filters:
-  top_k: 10
+  top_k: 25
   distance_m: 120
   priority_categories: [bus, truck, car]
 matching:
@@ -43,4 +43,4 @@ evaluation:
   time_verbose: false
 output:
   root_dir: outputs
-  tag: heal_detection
+  tag: heal_detection_single

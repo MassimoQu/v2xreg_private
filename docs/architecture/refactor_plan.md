@@ -6,7 +6,7 @@
 
 | 模块 | 主要职责 | 说明 |
 | --- | --- | --- |
-| `DatasetManager` | 统一管理 DAIR-V2X / V2X-Sim / 其他协同感知数据集的读取、缓存、划分 | 支持真值框（GT）与检测框（PointPillars/SECOND 等）双入口；提供样本索引、元信息查询接口；缓存 `/mnt/ssd_gw/v2i-calib/data/DAIR-V2X/detected/detected_boxes_test.json` 等检测输出 |
+| `DatasetManager` | 统一管理 DAIR-V2X / V2X-Sim / 其他协同感知数据集的读取、缓存、划分 | 支持真值框（GT）与检测框（PointPillars/SECOND 等）双入口；提供样本索引、元信息查询接口；缓存示例：`data/DAIR-V2X/detected/detected_boxes_test.json` |
 | `SampleLoader` | 根据任务描述加载单帧/批次的 box/点云/外参真值 | 需要可选噪声注入；对接现有 `CooperativeReader` 但抽象为无状态函数；预留“上帧 prior + 扰动”入口 |
 | `DetectionAdapter` | 与外部协同感知框架接口 | 当前由协同感知框架（Python）向本文提供检测框；第一版缓存检测结果，第二版计划与 OpenCOOD 感知模块实时联动 |
 

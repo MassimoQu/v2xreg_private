@@ -17,21 +17,21 @@ matching:
   strategy: ['category', 'core']
   core_components: ['centerpoint_distance', 'vertex_distance']
   filter_strategy: thresholdRetained
-  filter_threshold: 4
+  filter_threshold: 3
   matches2extrinsic: weightedSVD
   svd_strategy: svd_with_match
   distance_thresholds:
-    truck: 1.5
-    van: 1.5
-    bus: 1.5
-    car: 1.0
-    trafficcone: 0.5
-    pedestrian: 0.5
-    cyclist: 0.5
-    motorcyclist: 0.5
-    tricylist: 0.5
-    barrawlist: 0.5
-    detected: 1.0
+    truck: 1.8
+    van: 1.8
+    bus: 1.8
+    car: 1.2
+    trafficcone: 0.7
+    pedestrian: 0.7
+    cyclist: 0.7
+    motorcyclist: 0.7
+    tricylist: 0.7
+    barrawlist: 0.7
+    detected: 1.2
   prior_weight: 0.0
   parallel_flag: false
   corresponding_parallel: false
@@ -43,4 +43,4 @@ evaluation:
   time_verbose: false
 output:
   root_dir: outputs
-  tag: heal_detection_single_subset
+  tag: heal_detection_single_subset_relaxed

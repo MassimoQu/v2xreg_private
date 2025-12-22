@@ -1,5 +1,7 @@
 # V2X-Reg++ Optimization Exploration Log
 
+> INTERNAL NOTE: optimization experiments + intermediate analysis.
+
 *Last updated: 2025-11-23 12:25 UTC*  
 Dataset: DAIR-V2X cooperative vehicle–infrastructure subset (`max_samples=30`, GT boxes unless noted).  
 Baseline config: `configs/pipeline_hkust.yaml`.

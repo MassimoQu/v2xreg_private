@@ -14,15 +14,22 @@ class DetectionAdapter:
 
     def __init__(self, cache_path: Optional[str] = None) -> None:
         self.cache_path = Path(cache_path) if cache_path else None
-        self._indexed: List[Dict[str, Any]] = []
+        self._indexed: List[Optional[Dict[str, Any]]] = []
         self._map: Dict[str, Dict[str, Any]] = {}
         if self.cache_path and self.cache_path.exists():
             with self.cache_path.open('r', encoding='utf-8') as f:
                 raw = json.load(f)
-            if isinstance(raw, dict) and all(k.isdigit() for k in raw.keys()):
-                for idx in sorted(map(int, raw.keys())):
-                    self._indexed.append(raw[str(idx)])
+            if isinstance(raw, dict) and raw and all(str(k).isdigit() for k in raw.keys()):
+                indices = sorted(int(k) for k in raw.keys())
+                max_idx = max(indices)
+                self._indexed = [None] * (max_idx + 1)
+                for idx in indices:
+                    self._indexed[idx] = raw.get(str(idx))
+            elif isinstance(raw, list):
+                # Some exporters store detection caches as a list aligned with the dataset index.
+                self._indexed = [entry if isinstance(entry, dict) else None for entry in raw]
             elif isinstance(raw, dict):
+                # Arbitrary mapping (e.g. "<infra>_<veh>" -> record).
                 self._map = raw
 
     def _convert_bbox(
@@ -44,6 +51,25 @@ class DetectionAdapter:
         arr = np.asarray(corners, dtype=np.float32)
         return BBox3d(bbox_type, arr, confidence=confidence, descriptor=descriptor)
 
+    def _record_matches_ids(
+        self,
+        record: Optional[Dict[str, Any]],
+        infra_id: Optional[str],
+        veh_id: Optional[str],
+    ) -> bool:
+        if not isinstance(record, dict) or not infra_id or not veh_id:
+            return False
+        infra_norm = str(infra_id).lower()
+        veh_norm = str(veh_id).lower()
+        rec_infra_raw = record.get('infra_frame_id') or record.get('infra_id')
+        rec_veh_raw = record.get('veh_frame_id') or record.get('veh_id')
+        if not rec_infra_raw and not rec_veh_raw:
+            # No frame IDs stored -> assume the cache is already index-aligned.
+            return True
+        rec_infra = str(rec_infra_raw or '').lower()
+        rec_veh = str(rec_veh_raw or '').lower()
+        return rec_infra == infra_norm and rec_veh == veh_norm
+
     def _resolve_record(
         self,
         idx: Optional[int] = None,
@@ -52,8 +78,10 @@ class DetectionAdapter:
     ) -> Optional[Dict[str, Any]]:
         record: Optional[Dict[str, Any]] = None
         if idx is not None and 0 <= idx < len(self._indexed):
-            record = self._indexed[idx]
-        elif infra_id and veh_id and self._map:
+            candidate = self._indexed[idx]
+            if self._record_matches_ids(candidate, infra_id, veh_id) or not infra_id or not veh_id:
+                record = candidate
+        if record is None and infra_id and veh_id:
             record = self._find_by_ids(infra_id, veh_id)
         return record
 
@@ -89,6 +117,16 @@ class DetectionAdapter:
         for key in candidate_keys:
             if key in self._map:
                 return self._map[key]
+        if infra_id and veh_id:
+            infra_norm = str(infra_id).lower()
+            veh_norm = str(veh_id).lower()
+            for record in self._indexed:
+                if not isinstance(record, dict):
+                    continue
+                rec_infra = str(record.get('infra_frame_id') or record.get('infra_id') or '').lower()
+                rec_veh = str(record.get('veh_frame_id') or record.get('veh_id') or '').lower()
+                if rec_infra == infra_norm and rec_veh == veh_norm:
+                    return record
         return None
 
     def get(

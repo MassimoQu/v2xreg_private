@@ -1,5 +1,7 @@
 # P0 阶段：HEAL 检测 → V2X-Reg++ 离线融合验证
 
+> INTERNAL NOTE: this report is an early integration log (P0) and may contain outdated metric semantics and intermediate hypotheses. For public reproduction, follow `docs/operations/experiment_progress_public.md` and `docs/operations/experiment_reproduction.md`.
+
 本报告记录了“导入 HEAL 检测结果，离线运行 V2X-Reg++ 标定流水线，并输出精度对比”的 P0 打通过程。V2X-Reg++ 默认使用距离（oDist）关联检测框；若需要回滚到旧版 V2I-Calib（oIoU 关联），可在 `configs/pipeline*.yaml` 中切换 `matching.strategy`。验证数据为 DAIR-V2X 测试集，硬件为单机 CPU（RTX GPU 未使用）。
 
 ## 1. 数据准备与工具
