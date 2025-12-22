@@ -147,7 +147,7 @@
 1. 对每种 detector 运行 `pose_graph_pre_calc.py --per_agent` 导出 stage-1，保存到 `data/DAIR-V2X/detected/<model_name>/`；
 2. 用 `heal_stage1_to_detection_cache.py` + `summarize_detection_cache.py` 生成 cache 并记录平均检测数；
 3. 以相同的 `configs/pipeline_detection.yaml`（复制一份修改 `top_k/tag` 即可）跑 `python tools/run_calibration.py`，比较不同 detector 对 V2X-Reg++ 的影响；
-4. 将指标追加到本文件和 `docs/operations/experiment_progress_internal.md` 便于交接。
+4. 将指标追加到本文件便于交接。
 
 ### 进阶训练 / 模型并行（2025-11-24 晚）
 - **PointPillars fine-tune**：在原 `m1` 模型目录中继续训练到 30 epoch（GPU0/1，batch=12），日志 `logs/heal/veh_single_finetune.log` / `rsu_single_finetune.log`，对外发布 checkpoint 仍位于 `...18_47_23/` 与 `...18_47_32/`。

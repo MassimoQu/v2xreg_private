@@ -11,7 +11,6 @@ This checklist is intended to keep the public repository **reproducible and cohe
 2. **Docs point to the right entrypoints**
    - Public entry: `docs/operations/experiment_progress_public.md`
    - Full reproduction guide: `docs/operations/experiment_reproduction.md`
-   - Internal logs (optional): `docs/operations/experiment_progress_internal.md` (do not cite as paper numbers)
 
 3. **No machine-specific paths**
    - Avoid hard-coded `/mnt/...`, `/data2/...` paths in public-facing docs/config examples.
@@ -28,4 +27,3 @@ This checklist is intended to keep the public repository **reproducible and cohe
 
 - Classical/global registration baselines:
   - Keep scripts under `benchmarks/`, but call out heavy dependencies (TEASER++ python bindings, Open3D, etc.).
-

@@ -1,6 +1,6 @@
 # V2X-Reg++ Public Reproduction Notes
 
-This page is the **public-facing** experiment entrypoint (minimal + reproducible). For internal work logs (HEAL, detection debugging, exploratory sweeps), see `docs/operations/experiment_progress_internal.md`.
+This page is the **public-facing** experiment entrypoint (minimal + reproducible).
 
 ## 1. DAIR-V2X Table III (GT sweeps)
 
@@ -28,4 +28,3 @@ The pipeline expects the official DAIR-V2X cooperative split under:
 - `data/DAIR-V2X/cooperative-vehicle-infrastructure/`
 
 If you keep data elsewhere, either symlink it into place or edit `data.data_root` / `data.data_info_path` in the YAML config. See `docs/operations/experiment_reproduction.md`.
-
