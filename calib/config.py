@@ -12,11 +12,6 @@ class DataConfig:
     split: str
     data_info_path: str
     data_root: str
-    detection_cache: Optional[str] = None
-    use_detection: bool = False
-    feature_cache: Optional[str] = None
-    use_features: bool = False
-    feature_field: str = 'feature_corner3d_np_list'
     noise: Dict[str, Any] = field(default_factory=dict)
     max_samples: Optional[int] = None
     shuffle_box_vertices: Dict[str, bool] = field(default_factory=dict)

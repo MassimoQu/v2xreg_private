@@ -54,24 +54,6 @@ EXPERIMENTS: List[Dict] = [
         },
     },
     {
-        'tag': 'dair_v2xregpp_pp15',
-        'description': 'V2X-Reg++ with PointPillars detections, top-15',
-        'overrides': {
-            'filters.top_k': 15,
-            'data.use_detection': True,
-            'data.detection_cache': 'data/DAIR-V2X/detected/detected_boxes_test.json',
-        },
-    },
-    {
-        'tag': 'dair_v2xregpp_sc15',
-        'description': 'V2X-Reg++ with SECOND detections, top-15',
-        'overrides': {
-            'filters.top_k': 15,
-            'data.use_detection': True,
-            'data.detection_cache': 'data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json',
-        },
-    },
-    {
         'tag': 'dair_v2xregpp_gt25_hsvd',
         'description': 'V2X-Reg++ GT top-25 with highest-score SVD (hSVD)',
         'overrides': {
@@ -111,21 +93,10 @@ def main() -> None:
         nargs='*',
         help='Optional subset of experiment tags to run. Defaults to all configured experiments.',
     )
-    parser.add_argument(
-        '--include-detection',
-        action='store_true',
-        help='Also run detection-cache baselines (requires a compatible detection cache + data_info alignment).',
-    )
     args = parser.parse_args()
 
     results = {}
     selected = [exp for exp in EXPERIMENTS if not args.tags or exp['tag'] in args.tags]
-    if not args.include_detection:
-        selected = [
-            exp
-            for exp in selected
-            if not bool(exp.get('overrides', {}).get('data.use_detection'))
-        ]
     for exp in selected:
         cfg = load_config(args.config)
         apply_overrides(cfg, {'output.tag': exp['tag']})

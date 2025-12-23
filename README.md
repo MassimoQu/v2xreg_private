@@ -1,4 +1,4 @@
-# V2I-Calib / V2X-Reg++: Object-Level Online Point Cloud Registration for V2I/V2X
+# V2I-Calib / V2X-Reg++: Object-Level Online Registration for V2I/V2X
 
 <h3 align="center">
   <a href="https://ieeexplore.ieee.org/abstract/document/10802098"><img src="https://img.shields.io/badge/IROS24-Paper-blue?logo=paper"/> </a>
@@ -9,19 +9,17 @@
   <img src="./static/images/V2I-CALIB++_workflow_v2.png" alt="V2I-CALIB++ workflow" width="88%">
 </div>
 
-## Status (public)
+## Overview
 
-- 实验数据正在整理（本仓库提供复现实验脚本；论文中的表格/数字以论文为准）。
-- This public tree is curated to stay aligned with the paper narrative; additional exploratory notes/results are intentionally not published here.
+This repository contains an **object-level, online registration / calibration solver** for vehicle–infrastructure and multi-terminal sensing, using **3D detection boxes** as the geometric primitives.
 
-## Highlights
+Two variants are supported:
+- **V2I-Calib**: oIoU-based association (IROS 2024).
+- **V2X-Reg++**: distance-based association (IEEE T-ITS).
 
-- Initialization-free online calibration for vehicle–infrastructure / multi-terminal sensing using perception objects.
-- Two variants are supported:
-  - **V2I-Calib**: oIoU-based association (IROS 2024).
-  - **V2X-Reg++**: distance-based association (arXiv/TITS).
+## Getting Started
 
-## Installation
+### Installation
 
 ```bash
 conda create -n v2xreg python=3.10 -y
@@ -35,19 +33,33 @@ git submodule update --init --recursive
 pip install open3d==0.17.* torch==2.3.*
 ```
 
-## Data: DAIR-V2X
+### Dataset: DAIR-V2X
 
-The object-level pipeline expects the official DAIR-V2X cooperative split under:
+Download the official cooperative split and place it under:
 - `data/DAIR-V2X/cooperative-vehicle-infrastructure/`
 
-If you keep the dataset elsewhere, symlink it:
+If you keep the dataset elsewhere, create a symlink:
 ```bash
 ln -s /path/to/cooperative-vehicle-infrastructure data/DAIR-V2X/cooperative-vehicle-infrastructure
 ```
 
+Minimal files used by the **object-level pipeline**:
+```text
+cooperative-vehicle-infrastructure/
+  cooperative/
+    data_info.json
+    calib/lidar_i2v/{vehicle_frame_id}.json
+  infrastructure-side/label/virtuallidar/{infrastructure_frame_id}.json
+  vehicle-side/label/lidar/{vehicle_frame_id}.json
+```
+
+Notes:
+- The ground-truth transform is loaded from `cooperative/calib/lidar_i2v/*.json` (no extra post-processing in the public pipeline).
+- Images/point clouds are not required for the default object-level evaluation, but are needed by some baselines in `benchmarks/`.
+
 ## Run (DAIR-V2X)
 
-- Single run (GT boxes):
+- Single run on the official test split (GT boxes):
   ```bash
   python tools/run_calibration.py --config configs/pipeline.yaml --print
   ```
@@ -57,19 +69,13 @@ ln -s /path/to/cooperative-vehicle-infrastructure data/DAIR-V2X/cooperative-vehi
   python tools/run_dair_pipeline_experiments.py --config configs/pipeline_top3000.yaml
   ```
 
-Outputs are written to `outputs/<tag>/` (`metrics.json`, `matches.jsonl`).
+Outputs are written to `outputs/<tag>/`:
+- `metrics.json`: aggregated metrics + avg runtime
+- `matches.jsonl`: per-pair RE/TE, timing and match details
 
-## Detector boxes (optional)
+## Reproducibility
 
-Detector caches are not tracked by git (see `.gitignore`). Use:
-- `configs/pipeline_detection.yaml`
-- `configs/pipeline_detection_pp.yaml`
-- `configs/pipeline_detection_sc.yaml`
-
-HEAL stage-1 exports can be converted into the expected cache schema via:
-```bash
-python tools/heal_stage1_to_detection_cache.py --help
-```
+- 本仓库提供复现实验脚本；补充实验数据/日志仍在整理（“实验数据待整理”），论文中的表格/数字以论文为准。
 
 ## Docs
 
@@ -85,7 +91,7 @@ This project is not possible without the following codebases:
 ## Citation
 
 If you find our work or this repo useful, please cite:
-```
+```bibtex
 @inproceedings{qu2024v2i,
   title={V2I-Calib: A novel calibration approach for collaborative vehicle and infrastructure lidar systems},
   author={Qu, Qianxin and Xiong, Yijin and Zhang, Guipeng and Wu, Xin and Gao, Xiaohan and Gao, Xin and Li, Hanyu and Guo, Shichun and Zhang, Guoying},
@@ -94,12 +100,12 @@ If you find our work or this repo useful, please cite:
   year={2024},
   organization={IEEE}
 }
-```
-```
-@article{qu2024v2iplus,
-  title={V2X-Reg++: A Multi-terminal Spatial Calibration Approach in Urban Intersections for Collaborative Perception},
-  author={Qu, Qianxin and Zhang, Xinyu and Xiong, Yijin and Guo, Shichun and Song, Ziqiang and Li, Jun},
-  journal={arXiv preprint arXiv:2410.11008},
-  year={2024}
+
+@article{zhang2025v2x,
+  title={V2X-Reg++: A Real-Time Global Registration Method for Multi-End Sensing System in Urban Intersections},
+  author={Zhang, Xinyu and Qu, Qianxin and Xiong, Yijin and Xia, Chen and Song, Ziqiang and Peng, Qian and Liu, Kang and Li, Jun and Li, Keqiang},
+  journal={IEEE Transactions on Intelligent Transportation Systems},
+  year={2025},
+  publisher={IEEE}
 }
 ```

@@ -1,6 +1,6 @@
 # Experiment Reproduction Guide
 
-This repository provides the **calibration solver** and the scripts/configs used for the paper’s experiments (object-level / detection-box based).
+This repository provides the **calibration solver** and the scripts/configs used for the paper’s experiments (object-level, using 3D bounding boxes).
 
 **Important:** public experiment logs are still being curated (“实验数据待整理”). Please treat the paper as the source of truth for the reported numbers.
 
@@ -46,22 +46,6 @@ Outputs are written to `outputs/<tag>/`:
 - `metrics.json`: aggregated metrics + avg runtime
 - `matches.jsonl`: per-frame timing + match details
 
-## 4. Detector boxes (optional)
-
-Detector caches are not tracked by git (see `.gitignore`). Set:
-- `data.use_detection: true`
-- `data.detection_cache: <path-to-your-json>`
-
-Starting configs:
-- `configs/pipeline_detection.yaml`
-- `configs/pipeline_detection_pp.yaml`
-- `configs/pipeline_detection_sc.yaml`
-
-If you export stage-1 boxes from HEAL (or similar), you can convert them to the expected cache schema with:
-```bash
-python tools/heal_stage1_to_detection_cache.py --help
-```
-
-## 5. Baselines (optional)
+## 4. Baselines (optional)
 
 Baseline scripts live in `benchmarks/` and require extra dependencies/build steps (Open3D / TEASER++ / PyTorch, etc.). They are provided for convenience, but their public reproduction notes/results are still being consolidated.
