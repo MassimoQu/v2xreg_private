@@ -4,7 +4,7 @@ This page is the **public-facing** experiment entrypoint (minimal + reproducible
 
 ## 1. DAIR-V2X Table III (GT sweeps)
 
-We reproduce the GT sweeps using the Top-3000 subset config:
+The paper’s GT sweeps can be run using the Top-3000 subset config:
 - Base config: `configs/pipeline_top3000.yaml`
 - Subset list: `data/data_info_top3000.json`
 

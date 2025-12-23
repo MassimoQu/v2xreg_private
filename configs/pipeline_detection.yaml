@@ -43,4 +43,4 @@ evaluation:
   time_verbose: false
 output:
   root_dir: outputs
-  tag: heal_detection_single
+  tag: null
