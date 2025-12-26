@@ -47,6 +47,8 @@ def parse_args():
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--max-pairs", type=int, default=30)
     parser.add_argument("--output-tag", type=str, default=None)
+    parser.add_argument("--log-every", type=int, default=50,
+                        help="Log a detailed line every N frames (default: 50).")
     parser.add_argument("--trans-noise", type=float, default=2.0,
                         help="Std of translation noise (meters) applied to initial transform.")
     parser.add_argument("--rot-noise-deg", type=float, default=10.0,
@@ -169,6 +171,11 @@ def run_vips_matching(car1: Dict[str, List], car2: Dict[str, List], threshold: f
     else:
         _, eigvecs = np.linalg.eigh(M)
         w = eigvecs[:, -1]
+    # The leading eigenvector of a non-negative affinity matrix should be non-negative
+    # (Perron-Frobenius). Numerical solvers may return the flipped sign, which would
+    # break downstream normalization + thresholding.
+    if float(np.max(w)) < float(-np.min(w)):
+        w = -w
     if np.max(w) > np.min(w):
         w = (w - np.min(w)) / (np.max(w) - np.min(w))
     return find_optimal_matching(w, L1, L2, threshold=threshold)
@@ -294,7 +301,9 @@ def main():
                 coop.get_cooperative_infra_vehicle_boxes_object_list()
             )
             if len(inf_boxes) == 0 or len(veh_boxes) == 0:
-                logger.info(f"[{idx}] Skip {infra_id}-{veh_id}: empty boxes.")
+                elapsed = perf_counter() - start_time
+                logger.info(f"[{idx}] Empty boxes for {infra_id}-{veh_id}. Count as failure.")
+                append_failure("empty boxes", elapsed, infra_id, veh_id)
                 continue
             inf_pc, veh_pc = coop.get_cooperative_infra_vehicle_pointcloud()
             T_true = coop.get_cooperative_T_i2v()
@@ -346,10 +355,11 @@ def main():
             RE, TE = get_RE_TE_by_compare_T_6DOF_result_true(
                 convert_T_to_6DOF(T_refined), convert_T_to_6DOF(T_true))
             elapsed = perf_counter() - start_time
-            logger.info(
-                f"[{idx}] {infra_id}-{veh_id} matches={len(matches)} (raw {raw_count}) points={num_pts} "
-                f"RE={RE:.2f} TE={TE:.2f} time={elapsed:.2f}s | init RE={init_RE:.2f} TE={init_TE:.2f}"
-            )
+            if args.log_every > 0 and ((idx - start_idx) % args.log_every == 0 or idx == end_idx - 1):
+                logger.info(
+                    f"[{idx}] {infra_id}-{veh_id} matches={len(matches)} (raw {raw_count}) points={num_pts} "
+                    f"RE={RE:.2f} TE={TE:.2f} time={elapsed:.2f}s | init RE={init_RE:.2f} TE={init_TE:.2f}"
+                )
             f_match.write(json.dumps({
                 "infra_id": infra_id,
                 "veh_id": veh_id,

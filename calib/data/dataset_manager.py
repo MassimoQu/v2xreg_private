@@ -22,6 +22,7 @@ class DatasetManager:
         )
         self.detection_adapter = DetectionAdapter(config.detection_cache)
         self.feature_adapter = DetectionAdapter(config.feature_cache)
+        self._detection_vehicle_flip_y: Optional[bool] = None
         self._shuffle_flags = {
             key.lower(): bool(value) for key, value in (config.shuffle_box_vertices or {}).items()
         }
@@ -85,13 +86,64 @@ class DatasetManager:
             return None, None, None, None
         record = self.detection_adapter.get_record(idx=idx, infra_id=infra_id, veh_id=veh_id)
         if record is None:
-            return None, None, None, None
+            # Strict behavior: when detection mode is enabled but the cache does not contain
+            # this sample, treat it as a detection failure (empty boxes) instead of silently
+            # falling back to ground-truth boxes.
+            return [], [], None, None
         infra_boxes, veh_boxes = self.detection_adapter.convert_record(
             record, field='pred_corner3d_np_list', default_type='detected'
         )
         occ_map = record.get('occ_map_level0')
         bev_range = record.get('bev_range')
         return infra_boxes, veh_boxes, occ_map, bev_range
+
+    def _maybe_configure_detection_vehicle_flip(self, gt_vehicle_boxes, detections_vehicle) -> None:
+        if self._detection_vehicle_flip_y is not None:
+            return
+        if not gt_vehicle_boxes or not detections_vehicle:
+            self._detection_vehicle_flip_y = False
+            return
+
+        def _centers_xy(boxes):
+            centers = []
+            for box in boxes:
+                pts = np.asarray(box.get_bbox3d_8_3(), dtype=np.float32)
+                if pts.size == 0:
+                    continue
+                centers.append(pts.mean(axis=0)[:2])
+            if not centers:
+                return np.zeros((0, 2), dtype=np.float32)
+            return np.stack(centers, axis=0)
+
+        def _median_nn(a: np.ndarray, b: np.ndarray) -> float:
+            if a.size == 0 or b.size == 0:
+                return float('inf')
+            # a: (N,2), b: (M,2)
+            diff = a[:, None, :] - b[None, :, :]
+            dists = np.linalg.norm(diff, axis=2)
+            return float(np.median(dists.min(axis=1)))
+
+        gt_xy = _centers_xy(gt_vehicle_boxes)
+        det_xy = _centers_xy(detections_vehicle)
+        if gt_xy.size == 0 or det_xy.size == 0:
+            self._detection_vehicle_flip_y = False
+            return
+        det_xy_flip = det_xy.copy()
+        det_xy_flip[:, 1] *= -1
+        med_raw = _median_nn(gt_xy, det_xy)
+        med_flip = _median_nn(gt_xy, det_xy_flip)
+        # Enable flip only when the improvement is obvious and stable.
+        self._detection_vehicle_flip_y = bool(med_flip + 1e-6 < med_raw * 0.6 and med_flip + 1e-6 < med_raw - 1.0)
+
+    def _apply_flip_y(self, boxes):
+        flipped = []
+        for box in boxes:
+            copied = box.copy()
+            pts = np.asarray(copied.get_bbox3d_8_3(), dtype=np.float32).copy()
+            pts[:, 1] *= -1
+            copied.bbox3d_8_3 = pts
+            flipped.append(copied)
+        return flipped
 
     def _maybe_get_features(
         self, idx: int, infra_id: str, veh_id: str
@@ -117,6 +169,10 @@ class DatasetManager:
             feature_infra, feature_vehicle = self._maybe_get_features(
                 idx, inf_id, veh_id
             )
+            if detections_vehicle:
+                self._maybe_configure_detection_vehicle_flip(veh_boxes, detections_vehicle)
+                if self._detection_vehicle_flip_y:
+                    detections_vehicle = self._apply_flip_y(detections_vehicle)
             infra_boxes = self._shuffle_boxes(infra_boxes, 'infra')
             veh_boxes = self._shuffle_boxes(veh_boxes, 'vehicle')
             infra_boxes = self._apply_noise(infra_boxes, 'infra')

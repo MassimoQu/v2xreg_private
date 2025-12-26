@@ -59,7 +59,9 @@ EXPERIMENTS: List[Dict] = [
         'overrides': {
             'filters.top_k': 15,
             'data.use_detection': True,
-            'data.detection_cache': 'data/DAIR-V2X/detected/detected_boxes_test.json',
+            # Paper Table III uses PointPillars (PP). Prefer an ID-aligned cache; index-only
+            # caches can silently misalign on subsets.
+            'data.detection_cache': 'data/DAIR-V2X/detected/veh_rsu_dual_ft_detection_cache.json',
         },
     },
     {
@@ -68,7 +70,7 @@ EXPERIMENTS: List[Dict] = [
         'overrides': {
             'filters.top_k': 15,
             'data.use_detection': True,
-            'data.detection_cache': 'data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json',
+            'data.detection_cache': 'data/DAIR-V2X/detected/veh_rsu_dual_m2_second_detection_cache.json',
         },
     },
     {
@@ -95,8 +97,14 @@ def apply_overrides(cfg, overrides: Dict[str, object]) -> None:
         parts = path.split('.')
         target = cfg
         for attr in parts[:-1]:
-            target = getattr(target, attr)
-        setattr(target, parts[-1], value)
+            if isinstance(target, dict):
+                target = target[attr]
+            else:
+                target = getattr(target, attr)
+        if isinstance(target, dict):
+            target[parts[-1]] = value
+        else:
+            setattr(target, parts[-1], value)
 
 
 def main() -> None:

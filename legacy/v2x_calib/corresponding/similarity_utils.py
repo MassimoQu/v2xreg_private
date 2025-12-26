@@ -10,6 +10,7 @@ from ..utils import (
     implement_T_3dbox_object_list,
     get_extrinsic_from_two_3dbox_object,
     get_extrinsic_from_two_3dbox_object_svd_without_match,
+    get_extrinsic_from_two_points,
     convert_T_to_6DOF,
 )
 from .CorrespondingDetector import CorrespondingDetector
@@ -141,6 +142,19 @@ def cal_core_KP_distance_fast_components(
     base_flat = infra_vertices.reshape(-1, 3)
     base_shape = infra_vertices.shape
     max_matches_num = -1
+    # Dihedral permutations for 4-vertex rectangles (bottom plane), extended to 8 corners.
+    # This helps when detector-exported boxes have inconsistent vertex starting indices.
+    _dihedral_4 = [
+        (0, 1, 2, 3),
+        (1, 2, 3, 0),
+        (2, 3, 0, 1),
+        (3, 0, 1, 2),
+        (0, 3, 2, 1),
+        (3, 2, 1, 0),
+        (2, 1, 0, 3),
+        (1, 0, 3, 2),
+    ]
+    _dihedral_8 = [tuple(p) + tuple(i + 4 for i in p) for p in _dihedral_4]
 
     def _transform_vertices(T_matrix):
         T_np = np.asarray(T_matrix, dtype=np.float32)
@@ -161,23 +175,59 @@ def cal_core_KP_distance_fast_components(
             vehicle_box = vehicle_object_list[j]
             if category_flag and infra_type != vehicle_types[j]:
                 continue
+            # Use a small permutation search for detector boxes to make the seed alignment
+            # robust to corner-index conventions.
+            use_perm_search = False
             if svd_starategy == 'svd_with_match':
-                T = get_extrinsic_from_two_3dbox_object(infra_box, vehicle_box)
-            elif svd_starategy == 'svd_without_match':
-                T = get_extrinsic_from_two_3dbox_object_svd_without_match(infra_box, vehicle_box)
+                if str(infra_type).lower() == 'detected' or str(vehicle_types[j]).lower() == 'detected':
+                    use_perm_search = True
+            if use_perm_search:
+                pts1 = np.asarray(infra_box.get_bbox3d_8_3(), dtype=np.float32)
+                pts2 = np.asarray(vehicle_box.get_bbox3d_8_3(), dtype=np.float32)
+                best_center = best_vertex = -1
+                best_total = -1
+                for perm in _dihedral_8:
+                    T = get_extrinsic_from_two_points(pts1[list(perm)], pts2)
+                    converted_vertices = _transform_vertices(T)
+                    center_matches = 0
+                    vertex_matches = 0
+                    if use_centerpoint:
+                        center_matches = _count_matches_center(
+                            converted_vertices, vehicle_centers, threshold_row, type_match
+                        )
+                    if use_vertex:
+                        vertex_matches = _count_matches_vertex(
+                            converted_vertices, vehicle_vertices, threshold_row, type_match
+                        )
+                    total = center_matches + vertex_matches
+                    if total > best_total:
+                        best_total = total
+                        best_center = center_matches
+                        best_vertex = vertex_matches
+                if use_centerpoint:
+                    KP_center[i, j] = max(best_center - 1, 0)
+                    max_matches_num = max(max_matches_num, best_center)
+                if use_vertex:
+                    KP_vertex[i, j] = max(best_vertex - 1, 0)
+                    max_matches_num = max(max_matches_num, best_vertex)
             else:
-                raise ValueError('svd_starategy should be svd_with_match or svd_without_match')
-            converted_vertices = _transform_vertices(T)
-            if use_centerpoint:
-                matches = _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match)
-                KP_center[i, j] = max(matches - 1, 0)
-                max_matches_num = max(max_matches_num, matches)
-            if use_vertex:
-                matches_vertex = _count_matches_vertex(
-                    converted_vertices, vehicle_vertices, threshold_row, type_match
-                )
-                KP_vertex[i, j] = max(matches_vertex - 1, 0)
-                max_matches_num = max(max_matches_num, matches_vertex)
+                if svd_starategy == 'svd_with_match':
+                    T = get_extrinsic_from_two_3dbox_object(infra_box, vehicle_box)
+                elif svd_starategy == 'svd_without_match':
+                    T = get_extrinsic_from_two_3dbox_object_svd_without_match(infra_box, vehicle_box)
+                else:
+                    raise ValueError('svd_starategy should be svd_with_match or svd_without_match')
+                converted_vertices = _transform_vertices(T)
+                if use_centerpoint:
+                    matches = _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match)
+                    KP_center[i, j] = max(matches - 1, 0)
+                    max_matches_num = max(max_matches_num, matches)
+                if use_vertex:
+                    matches_vertex = _count_matches_vertex(
+                        converted_vertices, vehicle_vertices, threshold_row, type_match
+                    )
+                    KP_vertex[i, j] = max(matches_vertex - 1, 0)
+                    max_matches_num = max(max_matches_num, matches_vertex)
 
     return KP_center, KP_vertex, max_matches_num
 
@@ -501,6 +551,7 @@ def cal_core_KP_IoU_fast(
             converted_vertices = _transform_vertices(T)
             infra_mins, infra_maxs = _bounds_from_vertices(converted_vertices)
             match_count = 0
+            iou_sum = 0.0
             for infra_idx in range(num_infra):
                 key = str(infra_types[infra_idx]).lower()
                 veh_indices = type_to_vehicle.get(key)
@@ -524,8 +575,11 @@ def cal_core_KP_IoU_fast(
                     iou = cal_3dIoU(infra_box_vertices, vehicle_vertices[veh_idx])
                     if iou > 0:
                         match_count += 1
-            if match_count > 0:
-                KP[i, j] = float(match_count - 1) * infra_conf[i] * vehicle_conf[j]
+                        iou_sum += float(iou)
+            # Align to the legacy implementation: KP is the (floored) sum IoU score
+            # times the seed-pair confidences.
+            if iou_sum > 0:
+                KP[i, j] = float(int(iou_sum)) * infra_conf[i] * vehicle_conf[j]
                 max_matches_num = max(max_matches_num, match_count)
     return KP, max_matches_num
 

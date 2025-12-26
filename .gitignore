@@ -172,6 +172,8 @@ result/
 
 # Project-specific large artifacts
 outputs/
+outputs_paper*/
+outputs_tmp/
 Log/
 logs/
 static/visuals/
@@ -195,3 +197,5 @@ checkpoints/
 info/
 micromamba.tar.bz2
 bin
+
+benchmarks/third_party/eigen/build

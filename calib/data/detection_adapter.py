@@ -31,6 +31,17 @@ class DetectionAdapter:
             elif isinstance(raw, dict):
                 # Arbitrary mapping (e.g. "<infra>_<veh>" -> record).
                 self._map = raw
+        # Many caches are index-aligned but also store frame IDs; build a lookup map so that
+        # subsets (e.g., paper-selected JSON lists) can still resolve records quickly by IDs.
+        for record in self._indexed:
+            if not isinstance(record, dict):
+                continue
+            infra_raw = record.get('infra_frame_id') or record.get('infra_id')
+            veh_raw = record.get('veh_frame_id') or record.get('veh_id')
+            if not infra_raw or not veh_raw:
+                continue
+            key = f"{infra_raw}_{veh_raw}"
+            self._map.setdefault(key, record)
 
     def _convert_bbox(
         self,
@@ -96,15 +107,36 @@ class DetectionAdapter:
         pred_list = record.get(field, [])
         if not isinstance(pred_list, list):
             return infra_boxes, veh_boxes
+        cav_id_list = record.get('cav_id_list')
+        cav_ids: List[Optional[str]] = []
+        if isinstance(cav_id_list, list):
+            cav_ids = [str(val).lower() if val is not None else None for val in cav_id_list]
+        def _assign_for_idx(idx: int, boxes: List[BBox3d]) -> None:
+            nonlocal infra_boxes, veh_boxes
+            cav_id = cav_ids[idx] if idx < len(cav_ids) else None
+            if cav_id is None:
+                if idx == 0:
+                    infra_boxes = boxes
+                elif idx == 1:
+                    veh_boxes = boxes
+                return
+            if 'infra' in cav_id or 'rsu' in cav_id:
+                infra_boxes = boxes
+                return
+            if 'veh' in cav_id:
+                veh_boxes = boxes
+                return
+            # Unknown IDs: fall back to positional convention.
+            if idx == 0:
+                infra_boxes = boxes
+            elif idx == 1:
+                veh_boxes = boxes
         for idx, cav_boxes in enumerate(pred_list):
             converted = []
             if isinstance(cav_boxes, list):
                 for box in cav_boxes:
                     converted.append(self._convert_bbox(box, default_type=default_type))
-            if idx == 0:
-                infra_boxes = converted
-            elif idx == 1:
-                veh_boxes = converted
+            _assign_for_idx(idx, converted)
         return infra_boxes, veh_boxes
 
     def _find_by_ids(self, infra_id: str, veh_id: str) -> Optional[Dict[str, Any]]:

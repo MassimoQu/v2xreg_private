@@ -23,8 +23,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from configs.legacy_api import cfg as project_cfg  # noqa: E402  pylint: disable=wrong-import-position
 from configs.legacy_api import cfg_from_yaml_file as project_cfg_from_yaml  # noqa: E402
 from configs.legacy_api import Logger  # noqa: E402
+from calib.evaluation.metrics import FrameMetrics, aggregate_metrics  # noqa: E402
 from v2x_calib.reader.CooperativeBatchingReader import CooperativeBatchingReader  # noqa: E402
-from v2x_calib.utils import get_RE_TE_by_compare_T_6DOF_result_true, convert_T_to_6DOF  # noqa: E402
+from v2x_calib.utils import (  # noqa: E402
+    convert_6DOF_to_T,
+    convert_T_to_6DOF,
+    get_RE_TE_by_compare_T_6DOF_result_true,
+)
 
 
 BENCHMARK_ROOT = PROJECT_ROOT / 'benchmarks' / 'third_party' / 'LiDAR-Registration-Benchmark'
@@ -40,10 +45,9 @@ from misc import config as benchmark_cfg_module  # type: ignore
 
 try:
     from misc.registration import fpfh_teaser  # type: ignore
-except ImportError as exc:  # pragma: no cover - surface missing dependency clearly
-    raise ImportError(
-        "Failed to import LiDAR-Registration-Benchmark.misc.registration. "
-        "Please ensure `teaserpp_python` and `open3d` are installed.") from exc
+except ImportError:  # pragma: no cover
+    # Only required for the "teaser" method. ICP/PICP runs do not need teaserpp_python.
+    fpfh_teaser = None
 
 
 def parse_args():
@@ -52,6 +56,10 @@ def parse_args():
     parser.add_argument('--project-config', type=str,
                         default='configs/hkust_lidar_global_config.yaml',
                         help='Path to the project config that includes DAIR-V2X paths.')
+    parser.add_argument('--data-info', type=str, default=None,
+                        help='Optional data_info.json override (recommended for paper subsets).')
+    parser.add_argument('--data-root', type=str, default=None,
+                        help='Optional dataset root override (folder containing infrastructure-side/vehicle-side).')
     parser.add_argument('--benchmark-config', type=str,
                         default=str(BENCHMARK_ROOT / 'configs/dataset.yaml'),
                         help='Config inside LiDAR-Registration-Benchmark that defines registration params.')
@@ -61,6 +69,11 @@ def parse_args():
                         help='End index (exclusive) within the data_info list. -1 means all.')
     parser.add_argument('--max-pairs', type=int, default=None,
                         help='Optional hard limit on how many pairs to evaluate.')
+    parser.add_argument('--output-root', type=str, default='outputs',
+                        help='Output root directory (default: outputs).')
+    parser.add_argument('--output-tag', type=str, default=None,
+                        help='Optional stable output folder name. '
+                             'Defaults to a timestamp-based name.')
     parser.add_argument('--visualize', action='store_true',
                         help='Visualize the registration result via Open3D.')
     parser.add_argument('--method', type=str, default='teaser',
@@ -74,6 +87,16 @@ def parse_args():
                         help='Voxel size for ICP down-sampling (meters).')
     parser.add_argument('--max-corr', type=float, default=1.5,
                         help='Max correspondence distance for ICP (meters).')
+    parser.add_argument('--max-iter', type=int, default=100,
+                        help='Max ICP iterations (default: 100).')
+    parser.add_argument('--max-delta-trans', type=float, default=float('inf'),
+                        help='Optional sanity gate: if ICP changes translation more than this (meters) '
+                             'relative to the provided initial transform, fall back to the initial transform.')
+    parser.add_argument('--max-delta-rot-deg', type=float, default=float('inf'),
+                        help='Optional sanity gate: if ICP changes rotation more than this (degrees) '
+                             'relative to the provided initial transform, fall back to the initial transform.')
+    parser.add_argument('--log-every', type=int, default=50,
+                        help='Log a detailed line every N frames (default: 50).')
     parser.add_argument('--seed', type=int, default=2025,
                         help='Random seed for noise injection.')
     return parser.parse_args()
@@ -126,13 +149,13 @@ def add_transform_noise(T: np.ndarray, trans_std: float, rot_std_deg: float,
                         rng: np.random.Generator) -> np.ndarray:
     if trans_std <= 0 and rot_std_deg <= 0:
         return T.copy()
-    delta_t = rng.normal(scale=trans_std, size=3)
-    delta_euler = rng.normal(scale=math.radians(rot_std_deg), size=3)
-    delta_R = R.from_euler('xyz', delta_euler).as_matrix()
-    noise_T = np.eye(4)
-    noise_T[:3, :3] = delta_R
-    noise_T[:3, 3] = delta_t
-    return noise_T @ T
+    # Paper-aligned noise model: add Gaussian noise directly in the 6-DoF
+    # parameterization (translation in meters, XYZ Euler in degrees).
+    T6 = convert_T_to_6DOF(T)
+    noise = np.zeros(6, dtype=np.float64)
+    noise[:3] = rng.normal(scale=trans_std, size=3)
+    noise[3:] = rng.normal(scale=rot_std_deg, size=3)
+    return convert_6DOF_to_T(T6 + noise)
 
 
 def numpy_to_pcd(points: np.ndarray) -> o3d.geometry.PointCloud:
@@ -147,7 +170,8 @@ def run_icp_solver(infra_pc: np.ndarray,
                    *,
                    voxel: float,
                    max_corr: float,
-                   point_to_plane: bool) -> np.ndarray:
+                   point_to_plane: bool,
+                   max_iter: int) -> np.ndarray:
     src = numpy_to_pcd(infra_pc)
     tgt = numpy_to_pcd(veh_pc)
     if voxel > 0:
@@ -160,7 +184,7 @@ def run_icp_solver(infra_pc: np.ndarray,
         estimation = o3d.pipelines.registration.TransformationEstimationPointToPlane()
     else:
         estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint()
-    criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=100)
+    criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter)
     reg = o3d.pipelines.registration.registration_icp(
         src,
         tgt,
@@ -172,6 +196,15 @@ def run_icp_solver(infra_pc: np.ndarray,
     return reg.transformation
 
 
+def compute_se3_delta(T_new: np.ndarray, T_ref: np.ndarray) -> tuple[float, float]:
+    """Return (delta_rot_deg, delta_trans_m) for T_new relative to T_ref."""
+    T_delta = T_new @ np.linalg.inv(T_ref)
+    rot = R.from_matrix(T_delta[:3, :3])
+    delta_rot_deg = float(np.degrees(rot.magnitude()))
+    delta_trans_m = float(np.linalg.norm(T_delta[:3, 3]))
+    return delta_rot_deg, delta_trans_m
+
+
 def main():
     args = parse_args()
 
@@ -179,26 +212,31 @@ def main():
     benchmark_cfg_module.cfg_from_yaml_file(
         resolve_path(BENCHMARK_ROOT, args.benchmark_config), benchmark_cfg_module.cfg)
 
-    project_cfg.data.data_root_path = resolve_path(PROJECT_ROOT, project_cfg.data.data_root_path)
-    project_cfg.data.data_info_path = resolve_path(PROJECT_ROOT, project_cfg.data.data_info_path)
+    if args.data_root:
+        project_cfg.data.data_root_path = resolve_path(PROJECT_ROOT, args.data_root)
+    else:
+        project_cfg.data.data_root_path = resolve_path(PROJECT_ROOT, project_cfg.data.data_root_path)
+
+    if args.data_info:
+        project_cfg.data.data_info_path = resolve_path(PROJECT_ROOT, args.data_info)
+    else:
+        project_cfg.data.data_info_path = resolve_path(PROJECT_ROOT, project_cfg.data.data_info_path)
 
     reader = CooperativeBatchingReader(path_data_info=project_cfg.data.data_info_path,
                                        path_data_folder=project_cfg.data.data_root_path)
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
     logger = Logger(f"dair_lidar_benchmark_{args.method}_{timestamp}")
 
-    output_root = PROJECT_ROOT / 'outputs'
+    output_root = Path(resolve_path(PROJECT_ROOT, args.output_root))
     output_root.mkdir(parents=True, exist_ok=True)
-    tag_name = f"dair_lidar_benchmark_{args.method}_{timestamp}"
+    tag_name = args.output_tag or f"dair_lidar_benchmark_{args.method}_{timestamp}"
     output_dir = output_root / tag_name
     output_dir.mkdir(parents=True, exist_ok=True)
     detail_path = output_dir / 'details.jsonl'
     rng = np.random.default_rng(args.seed)
 
-    records: List[Dict[str, Any]] = []
+    records: List[FrameMetrics] = []
     processed = 0
-    success_threshold_rot = benchmark_cfg_module.cfg.evaluation.rot_thd
-    success_threshold_trans = benchmark_cfg_module.cfg.evaluation.trans_thd
 
     with open(detail_path, 'w') as detail_file:
         for (inf_id, veh_id, inf_pc, veh_pc, T_true) in \
@@ -207,39 +245,74 @@ def main():
                 break
 
             t_start = perf_counter()
+            delta_rot_deg = None
+            delta_trans_m = None
+            used_fallback = False
             if args.method == 'teaser':
+                if fpfh_teaser is None:
+                    raise ImportError(
+                        "Failed to import LiDAR-Registration-Benchmark.misc.registration.fpfh_teaser. "
+                        "Please ensure `teaserpp_python` and `open3d` are installed if you want to run '--method teaser'."
+                    )
                 T_pred = fpfh_teaser(inf_pc, veh_pc, args.visualize)
             elif args.method in {'icp', 'picp'}:
                 T_init = add_transform_noise(
                     T_true, args.trans_noise, args.rot_noise_deg, rng
                 )
-                T_pred = run_icp_solver(
-                    inf_pc,
-                    veh_pc,
-                    T_init,
-                    voxel=args.voxel,
-                    max_corr=args.max_corr,
-                    point_to_plane=(args.method == 'picp'),
-                )
+                if args.max_iter <= 0:
+                    T_pred = T_init
+                    used_fallback = True
+                else:
+                    T_icp = run_icp_solver(
+                        inf_pc,
+                        veh_pc,
+                        T_init,
+                        voxel=args.voxel,
+                        max_corr=args.max_corr,
+                        point_to_plane=(args.method == 'picp'),
+                        max_iter=args.max_iter,
+                    )
+                    delta_rot_deg, delta_trans_m = compute_se3_delta(T_icp, T_init)
+                    if delta_trans_m > args.max_delta_trans or delta_rot_deg > args.max_delta_rot_deg:
+                        T_pred = T_init
+                        used_fallback = True
+                    else:
+                        T_pred = T_icp
             else:  # pragma: no cover
                 raise ValueError(f"Unsupported method: {args.method}")
             t_end = perf_counter()
 
             RE, TE = get_RE_TE_by_compare_T_6DOF_result_true(
                 convert_T_to_6DOF(T_pred), convert_T_to_6DOF(T_true))
-            success = (RE <= success_threshold_rot) and (TE <= success_threshold_trans)
             runtime = t_end - t_start
 
-            record = format_result(inf_id, veh_id, RE, TE, runtime, success)
-            detail_file.write(json.dumps(record) + '\n')
-            records.append(record)
+            detail_file.write(json.dumps({
+                "infra_id": inf_id,
+                "veh_id": veh_id,
+                "RE": float(RE),
+                "TE": float(TE),
+                "time": float(runtime),
+                "delta_rot_deg": delta_rot_deg,
+                "delta_trans_m": delta_trans_m,
+                "used_fallback": used_fallback,
+            }) + '\n')
+            records.append(FrameMetrics(
+                infra_id=str(inf_id),
+                veh_id=str(veh_id),
+                RE=float(RE),
+                TE=float(TE),
+                stability=0.0,
+                time_cost=float(runtime),
+                matches_count=0,
+            ))
             processed += 1
 
-            logger.info(
-                f"[{processed}] inf_id={inf_id} veh_id={veh_id} "
-                f"RE={RE:.2f}deg TE={TE:.2f}m time={runtime:.3f}s success={success}")
+            if args.log_every > 0 and (processed == 1 or processed % args.log_every == 0):
+                logger.info(
+                    f"[{processed}] inf_id={inf_id} veh_id={veh_id} "
+                    f"RE={RE:.2f}deg TE={TE:.2f}m time={runtime:.3f}s")
 
-    summary = summarize_results(records)
+    summary = aggregate_metrics(records, thresholds=[1.0, 2.0, 3.0])
     metrics_path = output_dir / 'metrics.json'
     with open(metrics_path, 'w') as metrics_file:
         json.dump(summary, metrics_file, indent=2)

@@ -66,10 +66,10 @@ class ObjectLevelPipeline:
                 if use_features and sample.features_infra:
                     infra_boxes = list(sample.features_infra)
                     infra_source = 'feature'
-                    if use_detection and sample.detections_infra:
+                    if use_detection and sample.detections_infra is not None:
                         infra_boxes = infra_boxes + list(sample.detections_infra)
                         infra_source = 'feature+detection'
-                elif use_detection and sample.detections_infra:
+                elif use_detection and sample.detections_infra is not None:
                     infra_boxes = sample.detections_infra
                     infra_source = 'detection'
                 else:
@@ -77,10 +77,10 @@ class ObjectLevelPipeline:
                 if use_features and sample.features_vehicle:
                     veh_boxes = list(sample.features_vehicle)
                     veh_source = 'feature'
-                    if use_detection and sample.detections_vehicle:
+                    if use_detection and sample.detections_vehicle is not None:
                         veh_boxes = veh_boxes + list(sample.detections_vehicle)
                         veh_source = 'feature+detection'
-                elif use_detection and sample.detections_vehicle:
+                elif use_detection and sample.detections_vehicle is not None:
                     veh_boxes = sample.detections_vehicle
                     veh_source = 'detection'
                 else:

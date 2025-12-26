@@ -7,7 +7,19 @@
 
 来源：`static/V2X_Calib_TITS_pdfLaTeX2023_compiled.pdf`，Table III（DAIR-V2X）。
 
-V2X-Reg++（GT）SuccessRate@λ（仅按 RTE 阈值 λ 统计）：
+### 1.1 SuccessRate@λ 口径（重要）
+
+论文正文中对 SuccessRate@λ 的定义文字更偏向 “RTE < λ”；但对齐 Table III 的数值时，
+**更吻合的口径**是：
+
+- `SuccessRate@λ`: `RTE < λ (m) 且 RRE < λ (deg)`
+- `mRTE@λ / mRRE@λ`: 在 “成功帧” 上求均值
+
+当前仓库按上述口径计算 `success_at_*`；同时保留了仅按 RTE 的旧口径 `success_te_only_at_*`
+用于 debug（见 `calib/evaluation/metrics.py`）。
+
+### 1.2 Table III 中关键 V2X-Reg++（GT）行
+
 - `GT∞`：@1m 22.88%，@2m 48.03%，@3m 61.49%，Time 0.46s
 - `GT25`：@1m 32.27%，@2m 67.59%，@3m 82.93%，Time 0.12s
 - `GT15`：@1m 26.79%，@2m 61.17%，@3m 78.75%，Time 0.09s
@@ -17,18 +29,30 @@ V2X-Reg++（GT）SuccessRate@λ（仅按 RTE 阈值 λ 统计）：
 
 ## 2. 当前仓库复现口径（建议）
 
-- **GT sweeps 推荐入口**：`python tools/run_dair_pipeline_experiments.py --config configs/pipeline_top3000.yaml`
-  - 它会跑 `dair_v2xregpp_gt_inf / gt25 / gt15 / gt10` 等 tag，并落盘到 `outputs/<tag>/metrics.json`。
-- **注意子集**：`configs/pipeline_top3000.yaml` 默认使用 `data/data_info_top3000.json`（Top-3000 子集），这与论文的全量 DAIR-V2X 统计口径可能不同。
+### 2.1 论文对齐（推荐）
+
+- 使用论文评估子集（3737 帧）：`data/data_info_dair_paper3737.json`
+- 入口配置：`configs/pipeline_paper_dair3737.yaml`
+- 一键对比：`python tools/compare_table3.py --root outputs_paper_3737`
 
 ## 3. 当前状态（与论文差距）
 
-截至本次整理，仓库在 Top-3000 子集上（`filters.top_k=25`）可稳定跑通并达到：
-- `success@2m ≈ 0.54`（示例：一次 3000 帧 GT25 跑出来约 0.543，`avg_time ≈ 0.034s`）
+### 3.1 已对齐（可复现）
 
-与论文 Table III 的 `GT25 @2m = 0.6759` 仍有差距，需进一步定位是：
-1) 数据版本/筛选口径不同（论文“3737 帧” vs 本仓库“Top-3000 子集”等），还是  
-2) 算法实现/参数未完全对齐（例如阈值、匹配过滤、评估集合定义）。
+- Table III 下半部分（无初值、GT 输入）主力行已复现：
+  - `outputs_paper_3737/dair_v2xregpp_gt25/metrics.json` 的 `success@{1,2,3}m`
+    与论文 `32.27/67.59/82.93%` 基本一致。
+  - `GT15 / GT10 / GT∞` 亦在同一量级。
+- V2X-Reg（oIoU）行已修正 IoU 评分实现（`legacy/v2x_calib/corresponding/similarity_utils.py`），
+  `success@2m` 可对齐到论文的 `55.93%`（仍需继续对齐 `@1m`）。
+
+### 3.2 未对齐 / 待办（不建议写入 public）
+
+- **PP/SC 检测框行（V2X-Reg++PP15 / SC15）**：当前仓库内现有缓存跑出接近 0 的成功率，
+  与论文不一致；大概率原因是检测源/坐标系/筛选口径与论文不一致（需要拿到与论文一致的 PP/SECOND
+  输出或重新导出并校验坐标系）。
+- **ICP / PICP（初值法）**：现有 Open3D 版本实现结果明显高于论文、耗时明显低于论文，
+  需要进一步对齐算法实现/参数/噪声模型与计时口径（详见 `tools/compare_table3.py` 输出差异）。
 
 ## 4. 待办方向（ROI 优先）
 
@@ -36,4 +60,3 @@ V2X-Reg++（GT）SuccessRate@λ（仅按 RTE 阈值 λ 统计）：
 2. **对齐 Table III 配置**：把论文中 `GT∞/GT25/GT15/GT10` 的 box 排序规则、阈值（τ/τ1、α/β）与实现逐项核对。
 3. **把 gap 量化到组件**：统计失败帧占比、无匹配帧占比、以及成功帧的误差分布（可从 `outputs/<tag>/matches.jsonl` 聚合）。
 4. **检测框/HEAL 集成先降级为 WIP**：若无法稳定达到论文水平，public 只保留入口与工具，不在 README 里写“已复现论文表格数值”。
-
