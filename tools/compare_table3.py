@@ -1,341 +1,149 @@
 #!/usr/bin/env python3
-"""
-Compare local `metrics.json` outputs against the paper's Table III numbers.
-
-This script is intended for internal sanity checks when curating "paper-aligned"
-reproduction outputs. It does NOT run any experiments.
-"""
-
 from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, List, Optional, Tuple
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
-class TableRow:
-    name: str
-    paper: Dict[str, float]
-    rel_metrics_path: str
+class Table3Row:
+    method: str
+    noise: str  # "0" | "1" | "2" | "-" (no init)
+    mrre_deg: Tuple[float, float, float]
+    mrte_m: Tuple[float, float, float]
+    success_pct: Tuple[float, float, float]
+    time_s: Optional[float]
 
 
-PAPER_TABLE_III: Dict[str, Dict[str, float]] = {
-    # Init ✓ (noise in both translation meters and rotation degrees)
-    "ICP_noise0": {
-        "mRRE@1deg": 0.65,
-        "mRRE@2deg": 0.98,
-        "mRRE@3deg": 1.07,
-        "mRTE@1m": 0.42,
-        "mRTE@2m": 0.54,
-        "mRTE@3m": 0.58,
-        "success@1m": 47.52,
-        "success@2m": 89.55,
-        "success@3m": 96.01,
-        "time": 2.91,
-    },
-    "ICP_noise1": {
-        "mRRE@1deg": 0.80,
-        "mRRE@2deg": 1.36,
-        "mRRE@3deg": 1.72,
-        "mRTE@1m": 0.66,
-        "mRTE@2m": 1.31,
-        "mRTE@3m": 1.62,
-        "success@1m": 0.86,
-        "success@2m": 37.93,
-        "success@3m": 80.50,
-        "time": 2.92,
-    },
-    "ICP_noise2": {
-        "mRRE@1deg": 0.00,
-        "mRRE@2deg": 1.48,
-        "mRRE@3deg": 2.11,
-        "mRTE@1m": 0.00,
-        "mRTE@2m": 1.33,
-        "mRTE@3m": 2.03,
-        "success@1m": 0.00,
-        "success@2m": 3.66,
-        "success@3m": 19.94,
-        "time": 2.86,
-    },
-    "PICP_noise0": {
-        "mRRE@1deg": 0.52,
-        "mRRE@2deg": 0.80,
-        "mRRE@3deg": 0.88,
-        "mRTE@1m": 0.42,
-        "mRTE@2m": 0.54,
-        "mRTE@3m": 0.57,
-        "success@1m": 59.59,
-        "success@2m": 90.41,
-        "success@3m": 96.12,
-        "time": 1.35,
-    },
-    "PICP_noise1": {
-        "mRRE@1deg": 0.74,
-        "mRRE@2deg": 1.31,
-        "mRRE@3deg": 1.67,
-        "mRTE@1m": 0.75,
-        "mRTE@2m": 1.32,
-        "mRTE@3m": 1.63,
-        "success@1m": 2.91,
-        "success@2m": 42.78,
-        "success@3m": 87.93,
-        "time": 1.76,
-    },
-    "PICP_noise2": {
-        "mRRE@1deg": 0.80,
-        "mRRE@2deg": 1.40,
-        "mRRE@3deg": 2.11,
-        "mRTE@1m": 0.53,
-        "mRTE@2m": 1.45,
-        "mRTE@3m": 2.10,
-        "success@1m": 0.22,
-        "success@2m": 2.69,
-        "success@3m": 21.12,
-        "time": 1.70,
-    },
-    "VIPS_noise0": {
-        "mRRE@1deg": 0.63,
-        "mRRE@2deg": 0.89,
-        "mRRE@3deg": 0.99,
-        "mRTE@1m": 0.54,
-        "mRTE@2m": 0.78,
-        "mRTE@3m": 0.89,
-        "success@1m": 54.20,
-        "success@2m": 88.69,
-        "success@3m": 97.63,
-        "time": 0.46,
-    },
-    "VIPS_noise1": {
-        "mRRE@1deg": 0.66,
-        "mRRE@2deg": 1.04,
-        "mRRE@3deg": 1.24,
-        "mRTE@1m": 0.54,
-        "mRTE@2m": 0.82,
-        "mRTE@3m": 1.02,
-        "success@1m": 18.53,
-        "success@2m": 39.01,
-        "success@3m": 47.74,
-        "time": 0.44,
-    },
-    "VIPS_noise2": {
-        "mRRE@1deg": 0.58,
-        "mRRE@2deg": 1.17,
-        "mRRE@3deg": 1.56,
-        "mRTE@1m": 0.48,
-        "mRTE@2m": 0.96,
-        "mRTE@3m": 1.39,
-        "success@1m": 2.37,
-        "success@2m": 7.87,
-        "success@3m": 13.15,
-        "time": 0.47,
-    },
-    "CBM_noise0": {
-        "mRRE@1deg": 0.61,
-        "mRRE@2deg": 0.97,
-        "mRRE@3deg": 1.21,
-        "mRTE@1m": 0.53,
-        "mRTE@2m": 0.80,
-        "mRTE@3m": 1.06,
-        "success@1m": 17.11,
-        "success@2m": 23.04,
-        "success@3m": 26.49,
-        "time": 0.35,
-    },
-    "CBM_noise1": {
-        "mRRE@1deg": 0.71,
-        "mRRE@2deg": 0.94,
-        "mRRE@3deg": 1.14,
-        "mRTE@1m": 0.61,
-        "mRTE@2m": 0.74,
-        "mRTE@3m": 1.00,
-        "success@1m": 9.91,
-        "success@2m": 15.63,
-        "success@3m": 16.49,
-        "time": 0.36,
-    },
-    "CBM_noise2": {
-        "mRRE@1deg": 0.69,
-        "mRRE@2deg": 1.09,
-        "mRRE@3deg": 1.38,
-        "mRTE@1m": 0.58,
-        "mRTE@2m": 0.76,
-        "mRTE@3m": 1.06,
-        "success@1m": 6.03,
-        "success@2m": 12.28,
-        "success@3m": 16.81,
-        "time": 0.35,
-    },
-    # Init × (no pose prior)
-    "FGR": {
-        "mRRE@1deg": 0.71,
-        "mRRE@2deg": 1.15,
-        "mRRE@3deg": 1.47,
-        "mRTE@1m": 0.70,
-        "mRTE@2m": 1.13,
-        "mRTE@3m": 1.45,
-        "success@1m": 14.76,
-        "success@2m": 31.57,
-        "success@3m": 35.34,
-        "time": 22.73,
-    },
-    "Quatro": {
-        "mRRE@1deg": 0.62,
-        "mRRE@2deg": 1.22,
-        "mRRE@3deg": 1.46,
-        "mRTE@1m": 0.65,
-        "mRTE@2m": 1.19,
-        "mRTE@3m": 1.51,
-        "success@1m": 12.07,
-        "success@2m": 30.50,
-        "success@3m": 45.04,
-        "time": 21.58,
-    },
-    "Teaser++": {
-        "mRRE@1deg": 0.69,
-        "mRRE@2deg": 1.13,
-        "mRRE@3deg": 1.47,
-        "mRTE@1m": 0.66,
-        "mRTE@2m": 1.09,
-        "mRTE@3m": 1.44,
-        "success@1m": 14.33,
-        "success@2m": 29.74,
-        "success@3m": 34.81,
-        "time": 22.43,
-    },
-    "V2X-Reg": {
-        "mRRE@1deg": 0.66,
-        "mRRE@2deg": 1.03,
-        "mRRE@3deg": 1.25,
-        "mRTE@1m": 0.54,
-        "mRTE@2m": 0.91,
-        "mRTE@3m": 1.18,
-        "success@1m": 25.54,
-        "success@2m": 55.93,
-        "success@3m": 72.31,
-        "time": 0.21,
-    },
-    "V2X-Reg++GT_inf": {
-        "mRRE@1deg": 0.62,
-        "mRRE@2deg": 1.01,
-        "mRRE@3deg": 1.26,
-        "mRTE@1m": 0.49,
-        "mRTE@2m": 0.83,
-        "mRTE@3m": 1.07,
-        "success@1m": 22.88,
-        "success@2m": 48.03,
-        "success@3m": 61.49,
-        "time": 0.46,
-    },
-    "V2X-Reg++GT25": {
-        "mRRE@1deg": 0.63,
-        "mRRE@2deg": 1.01,
-        "mRRE@3deg": 1.23,
-        "mRTE@1m": 0.52,
-        "mRTE@2m": 0.85,
-        "mRTE@3m": 1.05,
-        "success@1m": 32.27,
-        "success@2m": 67.59,
-        "success@3m": 82.93,
-        "time": 0.12,
-    },
-    "V2X-Reg++GT15": {
-        "mRRE@1deg": 0.65,
-        "mRRE@2deg": 1.05,
-        "mRRE@3deg": 1.30,
-        "mRTE@1m": 0.54,
-        "mRTE@2m": 0.87,
-        "mRTE@3m": 1.10,
-        "success@1m": 26.79,
-        "success@2m": 61.17,
-        "success@3m": 78.75,
-        "time": 0.09,
-    },
-    "V2X-Reg++GT10": {
-        "mRRE@1deg": 0.66,
-        "mRRE@2deg": 1.11,
-        "mRRE@3deg": 1.36,
-        "mRTE@1m": 0.57,
-        "mRTE@2m": 0.92,
-        "mRTE@3m": 1.15,
-        "success@1m": 20.02,
-        "success@2m": 54.86,
-        "success@3m": 71.98,
-        "time": 0.04,
-    },
-    "V2X-Reg++PP15": {
-        "mRRE@1deg": 0.66,
-        "mRRE@2deg": 1.06,
-        "mRRE@3deg": 1.29,
-        "mRTE@1m": 0.55,
-        "mRTE@2m": 0.86,
-        "mRTE@3m": 1.07,
-        "success@1m": 24.91,
-        "success@2m": 56.62,
-        "success@3m": 70.94,
-    },
-    "V2X-Reg++SC15": {
-        "mRRE@1deg": 0.65,
-        "mRRE@2deg": 1.05,
-        "mRRE@3deg": 1.29,
-        "mRTE@1m": 0.54,
-        "mRTE@2m": 0.86,
-        "mRTE@3m": 1.06,
-        "success@1m": 25.15,
-        "success@2m": 56.89,
-        "success@3m": 71.23,
-    },
-    "V2X-Reg++GT25_hSVD": {
-        "mRRE@1deg": 0.71,
-        "mRRE@2deg": 1.13,
-        "mRRE@3deg": 1.35,
-        "mRTE@1m": 0.62,
-        "mRTE@2m": 0.98,
-        "mRTE@3m": 1.25,
-        "success@1m": 21.82,
-        "success@2m": 60.43,
-        "success@3m": 74.92,
-        "time": 0.12,
-    },
-    "V2X-Reg++GT25_mSVD": {
-        "mRRE@1deg": 0.67,
-        "mRRE@2deg": 1.08,
-        "mRRE@3deg": 1.31,
-        "mRTE@1m": 0.56,
-        "mRTE@2m": 0.94,
-        "mRTE@3m": 1.19,
-        "success@1m": 25.22,
-        "success@2m": 63.58,
-        "success@3m": 80.22,
-        "time": 0.12,
-    },
-}
+def canonical_method(name: str) -> str:
+    s = " ".join(str(name).strip().split())
+    s = s.replace("∞", "inf")
+    s = s.replace("GT∞", "GT inf")
+    s = s.replace("GT", "GT ")
+    s = re.sub(r"\[\d+\]", "", s)  # strip citations like [55]
+    s = s.replace("†", "").replace("‡", "")
+    s = " ".join(s.split())
+    return s
 
 
-DEFAULT_PATHS: Dict[str, str] = {
-    # Proposed + ablations (paper subset outputs)
-    "V2X-Reg": "dair_v2xreg_oiou_gt15/metrics.json",
-    "V2X-Reg++GT_inf": "dair_v2xregpp_gt_inf/metrics.json",
-    "V2X-Reg++GT25": "dair_v2xregpp_gt25/metrics.json",
-    "V2X-Reg++GT15": "dair_v2xregpp_gt15/metrics.json",
-    "V2X-Reg++GT10": "dair_v2xregpp_gt10/metrics.json",
-    "V2X-Reg++PP15": "dair_v2xregpp_pp15/metrics.json",
-    "V2X-Reg++SC15": "dair_v2xregpp_sc15/metrics.json",
-    "V2X-Reg++GT25_hSVD": "dair_v2xregpp_gt25_hsvd/metrics.json",
-    "V2X-Reg++GT25_mSVD": "dair_v2xregpp_gt25_msvd/metrics.json",
-    # Baselines (default layout under outputs_paper_3737/baselines/)
-    "ICP_noise0": "baselines/icp_paper_noise0/metrics.json",
-    "ICP_noise1": "baselines/icp_paper_noise1/metrics.json",
-    "ICP_noise2": "baselines/icp_paper_noise2/metrics.json",
-    "PICP_noise0": "baselines/picp_paper_noise0/metrics.json",
-    "PICP_noise1": "baselines/picp_paper_noise1/metrics.json",
-    "PICP_noise2": "baselines/picp_paper_noise2/metrics.json",
-}
+def parse_table3_from_table_txt(path: Path) -> Dict[Tuple[str, str], Table3Row]:
+    text = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    start = None
+    for i, line in enumerate(text):
+        if "Noise" in line and "SuccessRate" in line and "mRRE" in line:
+            start = i
+            break
+    if start is None:
+        raise RuntimeError(f"Failed to locate Table III header in {path}")
+
+    rows: Dict[Tuple[str, str], Table3Row] = {}
+    current_method: Optional[str] = None
+    last_noise: Optional[str] = None
+    pending_rows: List[Tuple[str, List[float], Optional[float]]] = []
+
+    for line in text[start + 1 :]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("†") or stripped.startswith(": For CBM"):
+            break
+
+        # Split by >=2 spaces so method names (with internal single spaces) stay intact.
+        fields = [f for f in re.split(r"\s{2,}", stripped) if f]
+        if not fields:
+            continue
+
+        # Optional init marker column.
+        if fields[0] in {"✓", "×"}:
+            fields = fields[1:]
+            if not fields:
+                continue
+
+        noise = fields[0]
+        rest = fields[1:]
+
+        method_in_line: Optional[str] = None
+        if rest and re.search(r"[A-Za-z]", rest[0]):
+            method_in_line = canonical_method(rest[0])
+            rest = rest[1:]
+
+        numeric: List[float] = []
+        time_s: Optional[float] = None
+        for token in rest:
+            token = token.strip()
+            if token == "-":
+                time_s = None
+                continue
+            try:
+                numeric.append(float(token))
+            except ValueError:
+                # Ignore non-numeric leftovers.
+                continue
+
+        if len(numeric) < 9:
+            last_noise = noise
+            continue
+
+        # In table.txt extraction, some methods only appear on the noise=1 row (with noise=0/2 rows blank).
+        # Additionally, the first row of a new 0/1/2 block might have a blank method while the previous block's
+        # method is still "current_method". Detect this by observing the noise cycle reset "2 -> 0".
+        if method_in_line is None and noise == "0" and last_noise == "2":
+            current_method = None
+
+        if method_in_line is None and current_method is None:
+            pending_rows.append((noise, numeric, time_s))
+            last_noise = noise
+            continue
+
+        if method_in_line is not None:
+            current_method = method_in_line
+            # Backfill any pending rows (typically noise=0) for this method.
+            for pending_noise, pending_numeric, pending_time in pending_rows:
+                mrre = tuple(pending_numeric[0:3])  # type: ignore[assignment]
+                mrte = tuple(pending_numeric[3:6])  # type: ignore[assignment]
+                succ = tuple(pending_numeric[6:9])  # type: ignore[assignment]
+                t_s = pending_time
+                if len(pending_numeric) >= 10:
+                    t_s = float(pending_numeric[9])
+                rows[(current_method, pending_noise)] = Table3Row(
+                    method=current_method,
+                    noise=pending_noise,
+                    mrre_deg=mrre,  # type: ignore[arg-type]
+                    mrte_m=mrte,  # type: ignore[arg-type]
+                    success_pct=succ,  # type: ignore[arg-type]
+                    time_s=t_s,
+                )
+            pending_rows.clear()
+
+        assert current_method is not None
+        mrre = tuple(numeric[0:3])  # type: ignore[assignment]
+        mrte = tuple(numeric[3:6])  # type: ignore[assignment]
+        succ = tuple(numeric[6:9])  # type: ignore[assignment]
+        if len(numeric) >= 10:
+            time_s = float(numeric[9])
+        rows[(current_method, noise)] = Table3Row(
+            method=current_method,
+            noise=noise,
+            mrre_deg=mrre,  # type: ignore[arg-type]
+            mrte_m=mrte,  # type: ignore[arg-type]
+            success_pct=succ,  # type: ignore[arg-type]
+            time_s=time_s,
+        )
+        last_noise = noise
+
+    if not rows:
+        raise RuntimeError(f"Parsed 0 rows from {path}; check the Table III section.")
+    return rows
 
 
-def _load_json(path: Path) -> Optional[Dict[str, Any]]:
+def load_metrics(path: Path) -> Optional[dict]:
     if not path.exists():
         return None
     try:
@@ -344,118 +152,134 @@ def _load_json(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _fmt_num(value: Optional[float], ndigits: int = 2) -> str:
-    if value is None:
-        return "-"
-    return f"{value:.{ndigits}f}"
+def ours_from_metrics(metrics: dict) -> dict:
+    def _get(key: str) -> Optional[float]:
+        val = metrics.get(key)
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except Exception:
+            return None
 
-
-def _fmt_pct(value: Optional[float], ndigits: int = 2) -> str:
-    if value is None:
-        return "-"
-    return f"{value * 100:.{ndigits}f}"
-
-
-def _get_metrics_value(metrics: Dict[str, Any], key: str) -> Optional[float]:
-    raw = metrics.get(key)
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except Exception:
-        return None
-
-
-def _extract_row(metrics: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    # Success is stored as ratio (0..1).
+    succ = (
+        _get("success_at_1m"),
+        _get("success_at_2m"),
+        _get("success_at_3m"),
+    )
+    succ_pct = tuple(None if v is None else v * 100.0 for v in succ)
+    mrre = (
+        _get("mRRE@1deg") or _get("mRE@1m"),
+        _get("mRRE@2deg") or _get("mRE@2m"),
+        _get("mRRE@3deg") or _get("mRE@3m"),
+    )
+    mrte = (
+        _get("mRTE@1m") or _get("mTE@1m"),
+        _get("mRTE@2m") or _get("mTE@2m"),
+        _get("mRTE@3m") or _get("mTE@3m"),
+    )
     return {
-        "mRRE@1deg": _get_metrics_value(metrics, "mRRE@1deg"),
-        "mRRE@2deg": _get_metrics_value(metrics, "mRRE@2deg"),
-        "mRRE@3deg": _get_metrics_value(metrics, "mRRE@3deg"),
-        "mRTE@1m": _get_metrics_value(metrics, "mRTE@1m"),
-        "mRTE@2m": _get_metrics_value(metrics, "mRTE@2m"),
-        "mRTE@3m": _get_metrics_value(metrics, "mRTE@3m"),
-        "success@1m": _get_metrics_value(metrics, "success_at_1m"),
-        "success@2m": _get_metrics_value(metrics, "success_at_2m"),
-        "success@3m": _get_metrics_value(metrics, "success_at_3m"),
-        "time": _get_metrics_value(metrics, "avg_time"),
+        "success_pct": succ_pct,
+        "mrre_deg": mrre,
+        "mrte_m": mrte,
+        "time_s": _get("avg_time"),
+        "path": metrics.get("_path"),
     }
 
 
+def fmt_triplet(values: Tuple[Optional[float], Optional[float], Optional[float]], *, digits: int = 2) -> str:
+    def _fmt(v: Optional[float]) -> str:
+        if v is None:
+            return "NA"
+        return f"{v:.{digits}f}"
+
+    return "/".join(_fmt(v) for v in values)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--root",
-        default="outputs_paper_3737",
-        help="Folder that contains the Table III runs (default: outputs_paper_3737).",
-    )
-    parser.add_argument(
-        "--paths-json",
-        default=None,
-        help="Optional JSON mapping of row-name -> metrics.json path relative to --root.",
-    )
+    parser = argparse.ArgumentParser(description="Compare current outputs against paper Table III.")
+    parser.add_argument("--root", default="outputs_paper_3737", help="Output root for V2X-Reg++ runs (default: outputs_paper_3737).")
     args = parser.parse_args()
 
-    root = Path(args.root).resolve()
-    paths = dict(DEFAULT_PATHS)
-    if args.paths_json:
-        extra = json.loads(Path(args.paths_json).read_text(encoding="utf-8"))
-        if isinstance(extra, dict):
-            paths.update({str(k): str(v) for k, v in extra.items()})
+    table_txt = REPO_ROOT / "table.txt"
+    paper = parse_table3_from_table_txt(table_txt)
 
-    headers = [
-        "Row",
-        "Our Succ@1/2/3 (%)",
-        "Paper Succ@1/2/3 (%)",
-        "Our mRTE@2m / mRRE@2deg",
-        "Paper mRTE@2m / mRRE@2deg",
-        "Our Time(s)",
-        "Paper Time(s)",
-        "Path",
-    ]
-    print(" | ".join(headers))
-    print("-|-|-|-|-|-|-|-")
+    root = (REPO_ROOT / args.root).resolve()
 
-    for name, paper in PAPER_TABLE_III.items():
-        rel = paths.get(name)
-        path_display = rel or "-"
-        metrics = _load_json(root / rel) if rel else None
-        ours = _extract_row(metrics) if metrics else {}
+    # Canonical mapping from (method, noise) -> metrics.json path.
+    ours_paths: Dict[Tuple[str, str], Path] = {
+        # Paper lower block (no-init)
+        ("V2X-Reg", "-"): root / "dair_v2xreg_oiou_gt15" / "metrics.json",
+        ("V2X-Reg++GT inf", "-"): root / "dair_v2xregpp_gt_inf" / "metrics.json",
+        ("V2X-Reg++GT 25", "-"): root / "dair_v2xregpp_gt25" / "metrics.json",
+        ("V2X-Reg++GT 15", "-"): root / "dair_v2xregpp_gt15" / "metrics.json",
+        ("V2X-Reg++GT 10", "-"): root / "dair_v2xregpp_gt10" / "metrics.json",
+        ("V2X-Reg++PP 15", "-"): root / "dair_v2xregpp_pp15" / "metrics.json",
+        ("V2X-Reg++SC 15", "-"): root / "dair_v2xregpp_sc15" / "metrics.json",
+        ("V2X-Reg++GT 25 (hSVD)", "-"): root / "dair_v2xregpp_gt25_hsvd" / "metrics.json",
+        ("V2X-Reg++GT 25 (mSVD)", "-"): root / "dair_v2xregpp_gt25_msvd" / "metrics.json",
+        # Upper block baselines (init noise)
+        ("ICP", "0"): root / "baselines" / "icp_paper_noise0" / "metrics.json",
+        ("ICP", "1"): root / "baselines" / "icp_paper_noise1" / "metrics.json",
+        ("ICP", "2"): root / "baselines" / "icp_paper_noise2" / "metrics.json",
+        ("PICP", "0"): root / "baselines" / "picp_paper_noise0" / "metrics.json",
+        ("PICP", "1"): root / "baselines" / "picp_paper_noise1" / "metrics.json",
+        ("PICP", "2"): root / "baselines" / "picp_paper_noise2" / "metrics.json",
+        # VIPS/CBM runs live under outputs/ by default.
+        # Prefer "paper3737_*" folders that follow the Table III noise levels (0/1/2) and any
+        # additional gates needed to match the paper's reimplementations.
+        ("VIPS", "0"): REPO_ROOT / "outputs" / "vips" / "paper3737_noise0_thr1p5" / "metrics.json",
+        ("VIPS", "1"): REPO_ROOT / "outputs" / "vips" / "paper3737_noise1_thr1p5" / "metrics.json",
+        ("VIPS", "2"): REPO_ROOT / "outputs" / "vips" / "paper3737_noise2_thr1p5" / "metrics.json",
+        ("CBM", "0"): REPO_ROOT / "outputs" / "cbm" / "paper3737_noise0_min20" / "metrics.json",
+        ("CBM", "1"): REPO_ROOT / "outputs" / "cbm" / "paper3737_noise1_min20" / "metrics.json",
+        ("CBM", "2"): REPO_ROOT / "outputs" / "cbm" / "paper3737_noise2_min20" / "metrics.json",
+    }
 
-        our_succ = "/".join(
-            [
-                _fmt_pct(ours.get("success@1m")),
-                _fmt_pct(ours.get("success@2m")),
-                _fmt_pct(ours.get("success@3m")),
-            ]
-        )
-        paper_succ = "/".join(
-            [
-                _fmt_num(paper.get("success@1m")),
-                _fmt_num(paper.get("success@2m")),
-                _fmt_num(paper.get("success@3m")),
-            ]
-        )
-        our_pair = f"{_fmt_num(ours.get('mRTE@2m'))} / {_fmt_num(ours.get('mRRE@2deg'))}"
-        paper_pair = f"{_fmt_num(paper.get('mRTE@2m'))} / {_fmt_num(paper.get('mRRE@2deg'))}"
-        our_time = _fmt_num(ours.get("time"))
-        paper_time = _fmt_num(paper.get("time"))
+    targets = list(ours_paths.keys())
 
-        print(
-            " | ".join(
-                [
-                    name,
-                    our_succ,
-                    paper_succ,
-                    our_pair,
-                    paper_pair,
-                    our_time,
-                    paper_time,
-                    str(path_display),
-                ]
+    print(f"[Table III] paper source: {table_txt}")
+    print(f"[Table III] outputs root: {root}")
+    print()
+
+    for method, noise in targets:
+        paper_row = paper.get((method, noise))
+        path = ours_paths[(method, noise)]
+        ours_metrics = load_metrics(path)
+        ours: Optional[dict] = None
+        if ours_metrics is not None:
+            ours_metrics["_path"] = str(path)
+            ours = ours_from_metrics(ours_metrics)
+
+        print(f"- {method} (noise={noise})")
+        if paper_row is None:
+            print("  paper: MISSING (not found in table.txt parse)")
+        else:
+            print(
+                "  paper: "
+                f"succ%={paper_row.success_pct[0]:.2f}/{paper_row.success_pct[1]:.2f}/{paper_row.success_pct[2]:.2f} "
+                f"mRRE={paper_row.mrre_deg[0]:.2f}/{paper_row.mrre_deg[1]:.2f}/{paper_row.mrre_deg[2]:.2f} "
+                f"mRTE={paper_row.mrte_m[0]:.2f}/{paper_row.mrte_m[1]:.2f}/{paper_row.mrte_m[2]:.2f} "
+                f"time={('NA' if paper_row.time_s is None else f'{paper_row.time_s:.2f}')}"
             )
-        )
+        if ours is None:
+            print(f"  ours : MISSING ({path})")
+        else:
+            ours_succ = ours["success_pct"]
+            ours_mrre = ours["mrre_deg"]
+            ours_mrte = ours["mrte_m"]
+            ours_time = ours["time_s"]
+            print(
+                "  ours : "
+                f"succ%={fmt_triplet(ours_succ)} "
+                f"mRRE={fmt_triplet(ours_mrre, digits=2)} "
+                f"mRTE={fmt_triplet(ours_mrte, digits=2)} "
+                f"time={('NA' if ours_time is None else f'{ours_time:.2f}')} "
+                f"({path})"
+            )
+        print()
 
 
 if __name__ == "__main__":
     main()
-

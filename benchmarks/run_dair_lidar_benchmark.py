@@ -26,7 +26,6 @@ from configs.legacy_api import Logger  # noqa: E402
 from calib.evaluation.metrics import FrameMetrics, aggregate_metrics  # noqa: E402
 from v2x_calib.reader.CooperativeBatchingReader import CooperativeBatchingReader  # noqa: E402
 from v2x_calib.utils import (  # noqa: E402
-    convert_6DOF_to_T,
     convert_T_to_6DOF,
     get_RE_TE_by_compare_T_6DOF_result_true,
 )
@@ -149,13 +148,15 @@ def add_transform_noise(T: np.ndarray, trans_std: float, rot_std_deg: float,
                         rng: np.random.Generator) -> np.ndarray:
     if trans_std <= 0 and rot_std_deg <= 0:
         return T.copy()
-    # Paper-aligned noise model: add Gaussian noise directly in the 6-DoF
-    # parameterization (translation in meters, XYZ Euler in degrees).
-    T6 = convert_T_to_6DOF(T)
-    noise = np.zeros(6, dtype=np.float64)
-    noise[:3] = rng.normal(scale=trans_std, size=3)
-    noise[3:] = rng.normal(scale=rot_std_deg, size=3)
-    return convert_6DOF_to_T(T6 + noise)
+    # Paper Table III noise: apply a left-multiplicative SE(3) perturbation with
+    # equal-magnitude translation (m) and rotation (deg) Gaussian noise.
+    delta_t = rng.normal(scale=trans_std, size=3)
+    delta_euler_deg = rng.normal(scale=rot_std_deg, size=3)
+    delta_R = R.from_euler("xyz", delta_euler_deg, degrees=True).as_matrix()
+    noise_T = np.eye(4)
+    noise_T[:3, :3] = delta_R
+    noise_T[:3, 3] = delta_t
+    return noise_T @ T
 
 
 def numpy_to_pcd(points: np.ndarray) -> o3d.geometry.PointCloud:

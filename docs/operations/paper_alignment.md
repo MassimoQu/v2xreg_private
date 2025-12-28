@@ -39,20 +39,28 @@
 
 ### 3.1 已对齐（可复现）
 
-- Table III 下半部分（无初值、GT 输入）主力行已复现：
-  - `outputs_paper_3737/dair_v2xregpp_gt25/metrics.json` 的 `success@{1,2,3}m`
-    与论文 `32.27/67.59/82.93%` 基本一致。
-  - `GT15 / GT10 / GT∞` 亦在同一量级。
-- V2X-Reg（oIoU）行已修正 IoU 评分实现（`legacy/v2x_calib/corresponding/similarity_utils.py`），
-  `success@2m` 可对齐到论文的 `55.93%`（仍需继续对齐 `@1m`）。
+- Table III 下半部分（无初值、GT 输入）主力行已复现（3737 帧）：
+  - `outputs_paper_3737/dair_v2xregpp_gt25/metrics.json`：`success@{1,2,3}m ≈ 32.41/67.19/81.75%`
+    （论文：32.27/67.59/82.93%）
+  - `outputs_paper_3737/dair_v2xregpp_gt15/metrics.json`：`success@{1,2,3}m ≈ 26.57/62.43/78.89%`
+    （论文：26.79/61.17/78.75%）
+  - `outputs_paper_3737/dair_v2xregpp_gt10/metrics.json`：`success@{1,2,3}m ≈ 20.10/54.46/71.13%`
+    （论文：20.02/54.86/71.98%）
 
 ### 3.2 未对齐 / 待办（不建议写入 public）
 
 - **PP/SC 检测框行（V2X-Reg++PP15 / SC15）**：当前仓库内现有缓存跑出接近 0 的成功率，
   与论文不一致；大概率原因是检测源/坐标系/筛选口径与论文不一致（需要拿到与论文一致的 PP/SECOND
   输出或重新导出并校验坐标系）。
+- 已确认并修复的一个具体坑：部分 detection cache 的 `cav_id_list` 顺序为
+  `['vehicle','infrastructure']`，如果按 idx=0/1 固定映射会把 infra/veh 框对调并导致系统性失败；
+  目前 `calib/data/detection_adapter.py` 已改为按 `cav_id_list` 映射。
 - **ICP / PICP（初值法）**：现有 Open3D 版本实现结果明显高于论文、耗时明显低于论文，
   需要进一步对齐算法实现/参数/噪声模型与计时口径（详见 `tools/compare_table3.py` 输出差异）。
+- **V2X-Reg（oIoU）**：`outputs_paper_3737/dair_v2xreg_oiou_gt15/metrics.json` 当前仍低于论文
+  `25.54/55.93/72.31%`，需要继续核对 IoU 计数与过滤口径。
+- **VIPS / CBM**：已可全量跑通（3737），但与论文 Table III 的对应行仍有明显差距
+  （可能是 baseline 参数/噪声设定/实现差异导致“可跑但不可比”）。
 
 ## 4. 待办方向（ROI 优先）
 
