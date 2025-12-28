@@ -2,6 +2,8 @@
 
 目标：在 **DAIR-V2X / Table III** 的评估口径下，尽可能复现论文中的 **SuccessRate / mRRE / mRTE / Time**（以论文为准），并将“可复现且不冲突”的部分逐步迁移到 public 仓库。
 
+> 另见：`docs/operations/ai_context.md`（AI 迭代准则 + public/private 叙事边界）。
+
 ## 0. 已锁定口径（必须一致）
 
 - **评估集合**：`data/data_info_dair_paper3737.json`（3737 帧）

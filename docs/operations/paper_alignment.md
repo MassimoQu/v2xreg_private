@@ -3,6 +3,8 @@
 本文件用于“以论文为准”检查当前代码/数据是否能复现论文指标，并记录差距与待办方向。  
 注意：仓库内很多实验是**子集/快速跑**，与论文 Table III 的 **DAIR-V2X 全量统计**不一定一一对应，需要结合数据版本与筛选策略交叉验证。
 
+> 另见：`docs/operations/ai_context.md`（public/private 发布准则 + 复现迭代工作流）。
+
 ## 1. 论文指标（PDF 基准）
 
 来源：`static/V2X_Calib_TITS_pdfLaTeX2023_compiled.pdf`，Table III（DAIR-V2X）。
