@@ -21,11 +21,14 @@ import numpy as np
 
 CAV_ORDER_KEYS = {
     'pred_corner3d_np_list',
+    'pred_box3d_np_list',
+    'pred_score_np_list',
     'uncertainty_np_list',
     'lidar_pose_clean_np',
     'lidar_pose_np',
     'cav_id_list',
     'occ_map_level0',
+    'feature_corner3d_np_list',
 }
 
 
@@ -95,12 +98,22 @@ def normalize_entry(
     ensure_two_cavs: bool,
     deproject_to_local: bool,
     ego_index: int,
+    required_cav_substrings: Sequence[str] | None,
 ) -> Dict[str, Any]:
     if entry is None:
         return {}
     pred_list = entry.get('pred_corner3d_np_list')
     if ensure_two_cavs and (not isinstance(pred_list, list) or len(pred_list) < 2):
         return {}
+    if required_cav_substrings:
+        cav_ids = entry.get('cav_id_list')
+        if not isinstance(cav_ids, list):
+            return {}
+        normalized_ids = [str(cav_id).lower() for cav_id in cav_ids]
+        required = [str(tag).lower() for tag in required_cav_substrings if tag]
+        for tag in required:
+            if not any(tag in cav_id for cav_id in normalized_ids):
+                return {}
     if deproject_to_local and isinstance(pred_list, list):
         poses = entry.get('lidar_pose_clean_np') or entry.get('lidar_pose_np')
         if isinstance(poses, list) and len(poses) >= 1:
@@ -133,6 +146,55 @@ def normalize_entry(
                             transform_boxes_from_ego_to_local(box, transforms[cav_idx])
                         )
                 pred_list[cav_idx] = converted_boxes
+            box3d_list = entry.get('pred_box3d_np_list')
+            if isinstance(box3d_list, list):
+                for cav_idx, boxes in enumerate(box3d_list):
+                    if not isinstance(boxes, list) or cav_idx >= len(transforms):
+                        continue
+                    T_cav_ref = transforms[cav_idx]
+                    R_cav_ref = T_cav_ref[:3, :3]
+                    converted = []
+                    for box in boxes:
+                        payload = box
+                        is_dict = isinstance(box, dict)
+                        if is_dict:
+                            payload = box.get('box7d') or box.get('box3d') or box.get('pred_box3d')
+                        if payload is None:
+                            converted.append(box)
+                            continue
+                        arr = np.asarray(payload, dtype=np.float64).reshape(-1)
+                        if arr.size < 7:
+                            converted.append(box)
+                            continue
+                        center = np.array(arr[:3], dtype=np.float64)
+                        dims = np.array(arr[3:6], dtype=np.float64)
+                        yaw = float(arr[6])
+                        center_h = np.concatenate([center, [1.0]])
+                        center_new = (center_h @ T_cav_ref.T)[:3]
+                        forward = np.array([math.cos(yaw), math.sin(yaw), 0.0], dtype=np.float64)
+                        forward_new = R_cav_ref @ forward
+                        yaw_new = math.atan2(float(forward_new[1]), float(forward_new[0]))
+                        new_box = [
+                            float(center_new[0]),
+                            float(center_new[1]),
+                            float(center_new[2]),
+                            float(dims[0]),
+                            float(dims[1]),
+                            float(dims[2]),
+                            float(yaw_new),
+                        ]
+                        if is_dict:
+                            updated = dict(box)
+                            if 'box7d' in updated:
+                                updated['box7d'] = new_box
+                            elif 'box3d' in updated:
+                                updated['box3d'] = new_box
+                            else:
+                                updated['box3d'] = new_box
+                            converted.append(updated)
+                        else:
+                            converted.append(new_box)
+                    box3d_list[cav_idx] = converted
             feature_list = entry.get('feature_corner3d_np_list')
             if isinstance(feature_list, list):
                 for cav_idx, features in enumerate(feature_list):
@@ -167,6 +229,18 @@ def normalize_entry(
     return normalized
 
 
+def _extract_frame_id(path: str | None) -> str:
+    if not path:
+        return ''
+    parts = str(path).replace('\\', '/').split('/')
+    if not parts:
+        return ''
+    stem = parts[-1]
+    if '.' in stem:
+        stem = stem.split('.')[0]
+    return stem
+
+
 def stage1_to_detection(
     stage1: Mapping[str, Any],
     swap_order: bool,
@@ -175,20 +249,42 @@ def stage1_to_detection(
     keep_null: bool,
     deproject_to_local: bool,
     ego_index: int,
+    required_cav_substrings: Sequence[str] | None,
+    data_info: Sequence[Mapping[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     output: Dict[str, Any] = {}
     processed = 0
-    for key in sorted(stage1.keys(), key=lambda x: int(x)):
+    if data_info:
+        key_iter: Iterable[int] = range(len(data_info))
+    else:
+        key_iter = sorted(int(k) for k in stage1.keys())
+    for key_int in key_iter:
         if max_samples is not None and processed >= max_samples:
             break
+        entry = stage1.get(str(key_int))
+        if entry is None:
+            if keep_null:
+                output[str(key_int)] = None
+            continue
         normalized = normalize_entry(
-            stage1[key], swap_order, ensure_two_cavs, deproject_to_local, ego_index
+            entry,
+            swap_order,
+            ensure_two_cavs,
+            deproject_to_local,
+            ego_index,
+            required_cav_substrings,
         )
         if not normalized:
             if keep_null:
-                output[str(key)] = None
+                output[str(key_int)] = None
             continue
-        output[str(key)] = normalized
+        if data_info and 0 <= key_int < len(data_info):
+            info = data_info[key_int]
+            infra_path = info.get('infrastructure_pointcloud_path')
+            veh_path = info.get('vehicle_pointcloud_path')
+            normalized['infra_frame_id'] = _extract_frame_id(infra_path)
+            normalized['veh_frame_id'] = _extract_frame_id(veh_path)
+        output[str(key_int)] = normalized
         processed += 1
     return output
 
@@ -213,6 +309,14 @@ def parse_args() -> argparse.Namespace:
                         help='Convert boxes from ego frame back to each CAV local frame using lidar_pose_clean_np.')
     parser.add_argument('--ego-index', type=int, default=0,
                         help='Index of the ego/reference pose inside lidar_pose_clean_np when deprojecting (default: 0).')
+    parser.add_argument('--data-info', type=str, default=None,
+                        help='Optional data_info.json used to attach infra/vehicle frame IDs to each record.')
+    parser.add_argument(
+        '--require-cav-substrings',
+        nargs='+',
+        default=None,
+        help='Only keep entries whose cav_id_list contains all provided substrings (case-insensitive).',
+    )
     return parser.parse_args()
 
 
@@ -220,6 +324,16 @@ def main() -> None:
     args = parse_args()
     stage1_path = Path(args.stage1)
     output_path = Path(args.output)
+    data_info = None
+    if args.data_info:
+        info_path = Path(args.data_info)
+        if not info_path.exists():
+            raise FileNotFoundError(f"data_info file not found: {info_path}")
+        with info_path.open('r', encoding='utf-8') as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, list):
+            raise ValueError(f"data_info file must be a list, got {type(loaded)}")
+        data_info = loaded
     stage1_data = load_stage1_file(stage1_path)
     detection = stage1_to_detection(
         stage1_data,
@@ -229,6 +343,8 @@ def main() -> None:
         keep_null=args.keep_null,
         deproject_to_local=args.deproject_to_local,
         ego_index=args.ego_index,
+        required_cav_substrings=args.require_cav_substrings,
+        data_info=data_info,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open('w', encoding='utf-8') as f:

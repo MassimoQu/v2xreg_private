@@ -56,6 +56,12 @@ The repo ships a `legacy/v2x_calib/reader/V2XSet_Reader` helper that understands
 
 ## 3. DAIR-V2X experiments (Table III)
 
+Table III 的当前复现差距汇总（`paper / closest / best`）会持续写入：`docs/operations/table3_paper3737_repro_status.md`。可随时用以下命令刷新：
+```bash
+./.micromamba/envs/v2x/bin/python tools/generate_table3_paper3737_repro_report.py \
+  --output docs/operations/table3_paper3737_repro_status.md
+```
+
 All V2X-Reg / V2X-Reg++ numbers in Table III come from the object-level pipeline defined in `calib/pipelines/object_level.py` and configured by `configs/pipeline*.yaml`. Run:
 ```bash
 python tools/run_calibration.py --config configs/pipeline.yaml --print
@@ -64,6 +70,7 @@ Key knobs (all live inside `configs/pipeline.yaml` unless stated otherwise):
 
 | Paper setting | How to configure it |
 | --- | --- |
+| Table III Success gate | `evaluation.success_gate: te_re`（默认；Success=TE<thr 且 RE<thr）或 `evaluation.success_gate: te`（仅 TE<thr，用于对照/自检） |
 | V2X-Reg++ (oDist) | `matching.core_components: ['centerpoint_distance', 'vertex_distance']` (already the default) |
 | V2X-Reg (oIoU) | change to `matching.core_components: ['iou']` |
 | `GT^∞` / `GT^25` / `GT^15` / `GT^10` | `filters.top_k: 0/25/15/10` (`top_k=0` keeps all boxes) |

@@ -5,8 +5,48 @@ def get_xyz_from_bbox3d_8_3(bbox3d_8_3):
     return np.mean(bbox3d_8_3, axis=0)
 
 def get_lwh_from_bbox3d_8_3(bbox3d_8_3):
-    size = np.abs(bbox3d_8_3[4] - bbox3d_8_3[2])
-    l, w, h = size[0], size[1], size[2]
+    """
+    Estimate box edge lengths (l, w, h) from 8 corners.
+
+    NOTE:
+    The original implementation assumed a fixed corner ordering. Detector exports
+    (e.g., HEAL/PointPillars/SECOND caches) can shuffle corner order, which makes
+    index-based edge extraction invalid and breaks volume-based filtering.
+
+    This implementation is order-invariant: for each corner, take the three
+    smallest non-zero distances to other corners (its incident edges). Across 8
+    corners, each edge length appears 8 times, so we can recover the 3 lengths
+    via robust aggregation.
+    """
+    pts = np.asarray(bbox3d_8_3, dtype=np.float64)
+    if pts.shape != (8, 3):
+        pts = pts.reshape(-1, 3)
+    if pts.shape[0] != 8:
+        # Fallback: axis-aligned extents in the observed frame.
+        ext = np.ptp(pts, axis=0) if pts.size else np.zeros(3, dtype=np.float64)
+        return float(ext[0]), float(ext[1]), float(ext[2])
+
+    edge_lengths = []
+    for i in range(8):
+        diff = pts[i] - pts
+        dists = np.linalg.norm(diff, axis=1)
+        dists = dists[dists > 1e-6]
+        if dists.size < 3:
+            continue
+        smallest = np.sort(dists)[:3]
+        edge_lengths.extend(smallest.tolist())
+
+    if len(edge_lengths) < 24:
+        ext = np.ptp(pts, axis=0)
+        return float(ext[0]), float(ext[1]), float(ext[2])
+
+    edge_lengths = np.sort(np.asarray(edge_lengths, dtype=np.float64))
+    # Each edge length (l/w/h) appears 8 times in the 24 samples.
+    a = float(np.median(edge_lengths[0:8]))
+    b = float(np.median(edge_lengths[8:16]))
+    c = float(np.median(edge_lengths[16:24]))
+    # Return in descending order for stability.
+    l, w, h = sorted((a, b, c), reverse=True)
     return l, w, h
 
 def get_bbox3d_8_3_from_xyz_lwh_yaw(xyz, lwh, yaw):

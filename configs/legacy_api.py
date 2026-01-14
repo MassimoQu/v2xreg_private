@@ -47,6 +47,9 @@ class Logger:
         log_path = os.path.join(
             path, f"{name}_{datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.log"
         )
+        log_dir = os.path.dirname(log_path)
+        if log_dir and not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
         self.log_file = open(log_path, "w")
 
     def info(self, msg):

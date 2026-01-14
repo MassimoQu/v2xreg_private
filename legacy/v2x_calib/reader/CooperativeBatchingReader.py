@@ -38,8 +38,14 @@ class CooperativeBatchingReader:
         vehicle_file_names = self.vehicle_file_names[start_idx:end_idx]
         for infra_file_name, vehicle_file_name in zip(infra_file_names, vehicle_file_names):
             self.cooperative_reader = CooperativeReader(infra_file_name, vehicle_file_name, self.path_data_folder)
-            inf_bbox_object_list, veh_bbox_object_list = self.cooperative_reader.get_cooperative_infra_vehicle_boxes_object_list()
-            yield infra_file_name, vehicle_file_name, inf_bbox_object_list, veh_bbox_object_list, self.cooperative_reader.get_cooperative_T_i2v()
+            try:
+                inf_bbox_object_list, veh_bbox_object_list = (
+                    self.cooperative_reader.get_cooperative_infra_vehicle_boxes_object_list()
+                )
+                T_true = self.cooperative_reader.get_cooperative_T_i2v()
+            except FileNotFoundError as exc:
+                continue
+            yield infra_file_name, vehicle_file_name, inf_bbox_object_list, veh_bbox_object_list, T_true
 
     def generate_infra_vehicle_2dbboxes_object_list(self, start_idx=0, end_idx=-1):
         if end_idx == -1:

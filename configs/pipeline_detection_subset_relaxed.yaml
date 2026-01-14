@@ -1,0 +1,46 @@
+data:
+  dataset: DAIR-V2X
+  split: test
+  data_info_path: data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info_detection1765.json
+  data_root: data/DAIR-V2X/cooperative-vehicle-infrastructure
+  detection_cache: data/DAIR-V2X/detected/veh_rsu_dual_ft_detection_cache.json
+  use_detection: true
+  noise:
+    pos_std: 0
+    rot_std: 0
+  max_samples: 1765
+filters:
+  top_k: 25
+  distance_m: 120
+  priority_categories: [bus, truck, car]
+matching:
+  strategy: ['category', 'core']
+  core_components: ['centerpoint_distance', 'vertex_distance']
+  filter_strategy: thresholdRetained
+  filter_threshold: 3
+  matches2extrinsic: weightedSVD
+  svd_strategy: svd_with_match
+  distance_thresholds:
+    truck: 1.8
+    van: 1.8
+    bus: 1.8
+    car: 1.2
+    trafficcone: 0.7
+    pedestrian: 0.7
+    cyclist: 0.7
+    motorcyclist: 0.7
+    tricylist: 0.7
+    barrawlist: 0.7
+    detected: 1.2
+  prior_weight: 0.0
+  parallel_flag: false
+  corresponding_parallel: false
+solver:
+  stability_gate: 3
+  max_iterations: 1
+evaluation:
+  success_thresholds: [1.0, 2.0]
+  time_verbose: false
+output:
+  root_dir: outputs
+  tag: heal_detection_single_subset_relaxed

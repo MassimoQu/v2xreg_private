@@ -1,0 +1,4 @@
+_BASE_CONFIG_: configs/hkust_lidar_global_paper3737.yaml
+
+teaser:
+  rotation_tim_graph: COMPLETE

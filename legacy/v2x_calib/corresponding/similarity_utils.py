@@ -18,6 +18,182 @@ import multiprocessing as mp
 from itertools import product
 import functools # For functools.partial
 import atexit # To ensure pool cleanup on exit
+from scipy.optimize import linear_sum_assignment
+
+_LARGE_COST = 1e6
+_VERTEX_FLIP_INDICES = np.array([2, 3, 0, 1, 6, 7, 4, 5], dtype=np.int64)
+_DIHEDRAL_4 = [
+    (0, 1, 2, 3),
+    (1, 2, 3, 0),
+    (2, 3, 0, 1),
+    (3, 0, 1, 2),
+    (0, 3, 2, 1),
+    (3, 2, 1, 0),
+    (2, 1, 0, 3),
+    (1, 0, 3, 2),
+]
+_VERTEX_DIHEDRAL_PERMS = [
+    np.array(list(p) + [i + 4 for i in p], dtype=np.int64) for p in _DIHEDRAL_4
+]
+
+
+def _stack_bbox_vertices(box_object_list):
+    if not box_object_list:
+        return np.zeros((0, 8, 3), dtype=np.float32)
+    return np.stack(
+        [np.asarray(box.get_bbox3d_8_3(), dtype=np.float32) for box in box_object_list],
+        axis=0,
+    )
+
+
+def _stack_bbox_types(box_object_list):
+    if not box_object_list:
+        return np.zeros((0,), dtype=object)
+    return np.array([str(box.get_bbox_type()).lower() for box in box_object_list], dtype=object)
+
+
+def _normalize_thresholds(distance_threshold):
+    normalized = {}
+    for key, value in (distance_threshold or {}).items():
+        normalized[str(key).lower()] = float(value)
+    if not normalized:
+        return normalized, 1.0
+    fallback = normalized.get('detected', max(normalized.values()))
+    return normalized, float(fallback)
+
+
+def _solve_assignment(dist_matrix, threshold_row, type_match):
+    if dist_matrix.size == 0:
+        return 0
+    allowed = type_match & (dist_matrix <= threshold_row[:, None])
+    if not allowed.any():
+        return 0
+    cost = dist_matrix.copy()
+    cost[~allowed] = _LARGE_COST
+    row_ind, col_ind = linear_sum_assignment(cost)
+    if row_ind.size == 0:
+        return 0
+    valid = allowed[row_ind, col_ind]
+    return int(np.count_nonzero(valid))
+
+
+def _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match):
+    if converted_vertices.size == 0 or vehicle_centers.size == 0:
+        return 0
+    centers = converted_vertices.mean(axis=1)
+    dist = np.linalg.norm(centers[:, None, :] - vehicle_centers[None, :, :], axis=2)
+    return _solve_assignment(dist, threshold_row, type_match)
+
+
+def _count_matches_vertex(
+    converted_vertices,
+    vehicle_vertices,
+    threshold_row,
+    type_match,
+    *,
+    resolve_180_ambiguity: bool = False,
+):
+    if converted_vertices.size == 0 or vehicle_vertices.size == 0:
+        return 0
+    infra_flat = converted_vertices.reshape(converted_vertices.shape[0], -1)
+    veh_flat = vehicle_vertices.reshape(vehicle_vertices.shape[0], -1)
+    dist = np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
+    if resolve_180_ambiguity:
+        best = dist
+        for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
+            permuted = converted_vertices[:, perm, :].reshape(converted_vertices.shape[0], -1)
+            dist_perm = np.linalg.norm(permuted[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
+            best = np.minimum(best, dist_perm)
+        dist = best
+    return _solve_assignment(dist, threshold_row, type_match)
+
+
+def cal_core_KP_distance_fast_components(
+    infra_object_list,
+    vehicle_object_list,
+    use_centerpoint=True,
+    use_vertex=False,
+    *,
+    category_flag=True,
+    distance_threshold=None,
+    svd_starategy='svd_with_match',
+    resolve_180_ambiguity: bool = False,
+    infra_indices=None,
+    vehicle_indices=None,
+):
+    """
+    Vectorized variant that evaluates both centerpoint/vertex distance components in one pass.
+    Returns per-component KP matrices (or None) along with the maximum matched count.
+    """
+    num_infra = len(infra_object_list)
+    num_vehicle = len(vehicle_object_list)
+    KP_center = np.zeros((num_infra, num_vehicle), dtype=np.float32) if use_centerpoint else None
+    KP_vertex = np.zeros((num_infra, num_vehicle), dtype=np.float32) if use_vertex else None
+    if num_infra == 0 or num_vehicle == 0:
+        return KP_center, KP_vertex, -1
+
+    infra_vertices = _stack_bbox_vertices(infra_object_list)
+    vehicle_vertices = _stack_bbox_vertices(vehicle_object_list)
+    vehicle_centers = vehicle_vertices.mean(axis=1) if use_centerpoint else None
+    infra_types = _stack_bbox_types(infra_object_list)
+    vehicle_types = _stack_bbox_types(vehicle_object_list)
+    norm_thresholds, fallback_threshold = _normalize_thresholds(distance_threshold or {})
+    threshold_row = np.array(
+        [norm_thresholds.get(t, fallback_threshold) for t in infra_types], dtype=np.float32
+    )
+    if category_flag:
+        type_match = infra_types[:, None] == vehicle_types[None, :]
+    else:
+        type_match = np.ones((num_infra, num_vehicle), dtype=bool)
+
+    base_flat = infra_vertices.reshape(-1, 3)
+    base_shape = infra_vertices.shape
+    max_matches_num = -1
+
+    def _transform_vertices(T_matrix):
+        T_np = np.asarray(T_matrix, dtype=np.float32)
+        R = T_np[:3, :3]
+        t = T_np[:3, 3]
+        transformed = base_flat @ R.T + t
+        return transformed.reshape(base_shape)
+
+    if infra_indices is None:
+        infra_indices = range(num_infra)
+    if vehicle_indices is None:
+        vehicle_indices = range(num_vehicle)
+
+    for i in infra_indices:
+        infra_box = infra_object_list[i]
+        infra_type = infra_types[i] if i < len(infra_types) else ''
+        for j in vehicle_indices:
+            vehicle_box = vehicle_object_list[j]
+            if category_flag and infra_type != vehicle_types[j]:
+                continue
+            if svd_starategy == 'svd_with_match':
+                T = get_extrinsic_from_two_3dbox_object(
+                    infra_box, vehicle_box, double_check=bool(resolve_180_ambiguity)
+                )
+            elif svd_starategy == 'svd_without_match':
+                T = get_extrinsic_from_two_3dbox_object_svd_without_match(infra_box, vehicle_box)
+            else:
+                raise ValueError('svd_starategy should be svd_with_match or svd_without_match')
+            converted_vertices = _transform_vertices(T)
+            if use_centerpoint:
+                matches = _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match)
+                KP_center[i, j] = max(matches - 1, 0)
+                max_matches_num = max(max_matches_num, matches)
+            if use_vertex:
+                matches_vertex = _count_matches_vertex(
+                    converted_vertices,
+                    vehicle_vertices,
+                    threshold_row,
+                    type_match,
+                    resolve_180_ambiguity=bool(resolve_180_ambiguity),
+                )
+                KP_vertex[i, j] = max(matches_vertex - 1, 0)
+                max_matches_num = max(max_matches_num, matches_vertex)
+
+    return KP_center, KP_vertex, max_matches_num
 
 _PERSISTENT_PROCESS_POOL = None
 
@@ -159,6 +335,114 @@ def cal_core_KP_IoU(infra_object_list, vehicle_object_list, category_flag = True
                 max_matches_num = corresponding_detector.get_matched_num()
     # return KP, normalized_KP(KP), max_matches_num
     return KP, max_matches_num
+def _stack_confidences(box_object_list):
+    if not box_object_list:
+        return np.zeros((0,), dtype=np.float32)
+    return np.array([float(getattr(box, 'confidence', 1.0)) for box in box_object_list], dtype=np.float32)
+
+
+def _bounds_from_vertices(vertices):
+    """
+    Compute axis-aligned bounds (min/max per axis) for each box in ``vertices``.
+    vertices: (N, 8, 3)
+    returns: (mins, maxs) each (N, 3)
+    """
+    if vertices.size == 0:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.float32)
+    mins = vertices.min(axis=1)
+    maxs = vertices.max(axis=1)
+    return mins, maxs
+
+
+def cal_core_KP_IoU_fast(
+    infra_object_list,
+    vehicle_object_list,
+    *,
+    category_flag=True,
+    svd_starategy='svd_with_match',
+    infra_indices=None,
+    vehicle_indices=None,
+):
+    num_infra = len(infra_object_list)
+    num_vehicle = len(vehicle_object_list)
+    KP = np.zeros((num_infra, num_vehicle), dtype=np.float32)
+    if num_infra == 0 or num_vehicle == 0:
+        return KP, -1
+
+    infra_vertices = _stack_bbox_vertices(infra_object_list)
+    vehicle_vertices = _stack_bbox_vertices(vehicle_object_list)
+    infra_types = _stack_bbox_types(infra_object_list)
+    vehicle_types = _stack_bbox_types(vehicle_object_list)
+    infra_conf = _stack_confidences(infra_object_list)
+    vehicle_conf = _stack_confidences(vehicle_object_list)
+
+    base_flat = infra_vertices.reshape(-1, 3)
+    base_shape = infra_vertices.shape
+
+    def _transform_vertices(T_matrix):
+        T_np = np.asarray(T_matrix, dtype=np.float32)
+        R = T_np[:3, :3]
+        t = T_np[:3, 3]
+        transformed = base_flat @ R.T + t
+        return transformed.reshape(base_shape)
+
+    type_to_vehicle = {}
+    for idx, v_type in enumerate(vehicle_types):
+        key = str(v_type).lower()
+        type_to_vehicle.setdefault(key, []).append(idx)
+
+    veh_mins, veh_maxs = _bounds_from_vertices(vehicle_vertices)
+
+    max_matches_num = -1
+    if infra_indices is None:
+        infra_indices = range(num_infra)
+    if vehicle_indices is None:
+        vehicle_indices = range(num_vehicle)
+
+    for i in infra_indices:
+        infra_box = infra_object_list[i]
+        infra_type = str(infra_types[i]).lower()
+        for j in vehicle_indices:
+            vehicle_box = vehicle_object_list[j]
+            veh_type = str(vehicle_types[j]).lower()
+            if category_flag and infra_type != veh_type:
+                continue
+            if svd_starategy == 'svd_with_match':
+                T = get_extrinsic_from_two_3dbox_object(infra_box, vehicle_box)
+            elif svd_starategy == 'svd_without_match':
+                T = get_extrinsic_from_two_3dbox_object_svd_without_match(infra_box, vehicle_box)
+            else:
+                raise ValueError('svd_starategy should be svd_with_match or svd_without_match')
+            converted_vertices = _transform_vertices(T)
+            infra_mins, infra_maxs = _bounds_from_vertices(converted_vertices)
+            match_count = 0
+            for infra_idx in range(num_infra):
+                key = str(infra_types[infra_idx]).lower()
+                veh_indices = type_to_vehicle.get(key)
+                if not veh_indices:
+                    continue
+                infra_box_vertices = converted_vertices[infra_idx]
+                infra_min = infra_mins[infra_idx]
+                infra_max = infra_maxs[infra_idx]
+                for veh_idx in veh_indices:
+                    veh_min = veh_mins[veh_idx]
+                    veh_max = veh_maxs[veh_idx]
+                    if (
+                        infra_max[0] < veh_min[0]
+                        or infra_min[0] > veh_max[0]
+                        or infra_max[1] < veh_min[1]
+                        or infra_min[1] > veh_max[1]
+                        or infra_max[2] < veh_min[2]
+                        or infra_min[2] > veh_max[2]
+                    ):
+                        continue
+                    iou = cal_3dIoU(infra_box_vertices, vehicle_vertices[veh_idx])
+                    if iou > 0:
+                        match_count += 1
+            if match_count > 0:
+                KP[i, j] = float(match_count - 1) * infra_conf[i] * vehicle_conf[j]
+                max_matches_num = max(max_matches_num, match_count)
+    return KP, max_matches_num
 
 
 def cal_core_KP_distance(infra_object_list, vehicle_object_list, category_flag = True, core_similarity_component = 'centerpoint_distance', distance_threshold = 3, svd_starategy = 'svd_with_match', parallel = False):
@@ -234,6 +518,12 @@ def cal_descriptor_similarity(infra_object_list, vehicle_object_list, weight=1.0
         if desc_i is None:
             continue
         vec_i = np.asarray(desc_i, dtype=np.float32)
+        if vec_i.ndim != 1:
+            vec_i = vec_i.reshape(-1)
+        conf_i = 1.0
+        obj_i = infra_object_list[i]
+        if hasattr(obj_i, 'get_confidence'):
+            conf_i = float(obj_i.get_confidence())
         if metric == 'cosine':
             norm_i = np.linalg.norm(vec_i)
             if norm_i < eps:
@@ -242,25 +532,40 @@ def cal_descriptor_similarity(infra_object_list, vehicle_object_list, weight=1.0
             if desc_j is None:
                 continue
             vec_j = np.asarray(desc_j, dtype=np.float32)
+            if vec_j.ndim != 1:
+                vec_j = vec_j.reshape(-1)
+            dim = min(int(vec_i.size), int(vec_j.size))
+            if dim <= 0:
+                continue
+            vec_i_use = vec_i[:dim]
+            vec_j_use = vec_j[:dim]
+            conf_j = 1.0
+            obj_j = vehicle_object_list[j]
+            if hasattr(obj_j, 'get_confidence'):
+                conf_j = float(obj_j.get_confidence())
+            conf_w = float(np.sqrt(max(conf_i, 0.0) * max(conf_j, 0.0)))
             if metric == 'cosine':
-                norm_j = np.linalg.norm(vec_j)
+                norm_j = np.linalg.norm(vec_j_use)
                 if norm_j < eps:
                     continue
-                sim = float(np.dot(vec_i, vec_j) / (norm_i * norm_j + eps))
-                KP[i, j] = weight * max(0.0, sim)
+                norm_i_use = np.linalg.norm(vec_i_use)
+                if norm_i_use < eps:
+                    continue
+                sim = float(np.dot(vec_i_use, vec_j_use) / (norm_i_use * norm_j + eps))
+                KP[i, j] = weight * conf_w * max(0.0, sim)
             elif metric == 'l2':
-                dist = np.linalg.norm(vec_i - vec_j)
-                KP[i, j] = weight * np.exp(-dist)
+                dist = np.linalg.norm(vec_i_use - vec_j_use)
+                KP[i, j] = weight * conf_w * np.exp(-dist)
             else:
                 # default cosine if unknown metric
-                norm_i = np.linalg.norm(vec_i)
-                if norm_i < eps:
+                norm_i_use = np.linalg.norm(vec_i_use)
+                if norm_i_use < eps:
                     continue
-                norm_j = np.linalg.norm(vec_j)
+                norm_j = np.linalg.norm(vec_j_use)
                 if norm_j < eps:
                     continue
-                sim = float(np.dot(vec_i, vec_j) / (norm_i * norm_j + eps))
-                KP[i, j] = weight * max(0.0, sim)
+                sim = float(np.dot(vec_i_use, vec_j_use) / (norm_i_use * norm_j + eps))
+                KP[i, j] = weight * conf_w * max(0.0, sim)
     return KP
 
 def init_pool(infra_list, vehicle_list, category_flag, core_sim, distance_thresh, parallel_flag):

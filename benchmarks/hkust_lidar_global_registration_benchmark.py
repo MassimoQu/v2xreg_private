@@ -2,11 +2,12 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, Tuple, Union, List, Optional
+import zlib
 sys.path.append(str(Path(__file__).parent.parent))
+import teaserpp_python
 import open3d as o3d
 import numpy as np
 from scipy.spatial import cKDTree
-import teaserpp_python
 import copy
 import argparse
 import json
@@ -21,9 +22,6 @@ from v2x_calib import V2XSim_Reader, V2XSetReader
 
 BeamDebug = Dict[str, Union[float, int, bool]]
 
-infra_beam_rng = None
-infra_beam_rng_seed = None
-
 
 def _cfg_value(block, key, default=None):
     if block is None:
@@ -32,13 +30,9 @@ def _cfg_value(block, key, default=None):
         return block.get(key, default)
     return getattr(block, key, default)
 
-
-def _get_infra_beam_rng(seed):
-    global infra_beam_rng, infra_beam_rng_seed
-    if infra_beam_rng is None or infra_beam_rng_seed != seed:
-        infra_beam_rng = np.random.default_rng(seed)
-        infra_beam_rng_seed = seed
-    return infra_beam_rng
+def _stable_seed_token(value: object) -> int:
+    payload = str(value).encode("utf-8", errors="ignore")
+    return int(zlib.crc32(payload) & 0xFFFFFFFF)
 
 
 def compute_vertical_angles(points: np.ndarray) -> np.ndarray:
@@ -87,7 +81,12 @@ def _filter_points_by_vehicle_angle(points: np.ndarray, veh_points: np.ndarray, 
     return filtered, debug_info
 
 
-def apply_infra_beam_alignment(points: np.ndarray, veh_points: np.ndarray) -> Tuple[np.ndarray, BeamDebug]:
+def apply_infra_beam_alignment(
+    points: np.ndarray,
+    veh_points: np.ndarray,
+    *,
+    seed_components: Optional[Tuple[object, ...]] = None,
+) -> Tuple[np.ndarray, BeamDebug]:
     beam_cfg = _cfg_value(cfg.infra, 'beam_alignment', None)
     debug_info: BeamDebug = {}
     if beam_cfg is None or not _cfg_value(beam_cfg, 'enabled', False):
@@ -120,7 +119,21 @@ def apply_infra_beam_alignment(points: np.ndarray, veh_points: np.ndarray) -> Tu
     if target_points <= 0 or target_points == num_points:
         return points_aligned, debug_info
 
-    rng = _get_infra_beam_rng(_cfg_value(beam_cfg, 'random_seed', None))
+    base_seed = _cfg_value(beam_cfg, "random_seed", None)
+    if base_seed is None:
+        rng = np.random.default_rng()
+        debug_info["beam_rng_seeded"] = False
+    else:
+        base_seed_int = int(base_seed)
+        if seed_components:
+            tokens = [_stable_seed_token(c) for c in seed_components]
+            rng = np.random.default_rng(np.random.SeedSequence([base_seed_int, *tokens]))
+            debug_info["beam_rng_seeded"] = True
+            debug_info["beam_rng_mode"] = "per_frame"
+        else:
+            rng = np.random.default_rng(base_seed_int)
+            debug_info["beam_rng_seeded"] = True
+            debug_info["beam_rng_mode"] = "global"
     sampled_indices = rng.choice(num_points, size=target_points, replace=False)
     debug_info['infra_points_after_ratio_subsample'] = int(target_points)
     return points_aligned[sampled_indices], debug_info
@@ -193,7 +206,11 @@ def extract_fpfh(pcd, radius_normal, radius_feature):
 
 def find_knn_cpu(feat0, feat1, knn=1, return_distance=False):
     feat1tree = cKDTree(feat1)
-    dists, nn_inds = feat1tree.query(feat0, k=knn)
+    workers = int(os.environ.get("V2XREG_KDTREE_WORKERS", "-1"))
+    try:
+        dists, nn_inds = feat1tree.query(feat0, k=knn, workers=workers)
+    except TypeError:
+        dists, nn_inds = feat1tree.query(feat0, k=knn)
     if return_distance:
         return nn_inds, dists
     else:
@@ -230,8 +247,19 @@ def get_teaser_solver(noise_bound, rotation_estimation_algorithm=teaserpp_python
     solver_params.estimate_scaling = False
     solver_params.inlier_selection_mode = \
         teaserpp_python.RobustRegistrationSolver.INLIER_SELECTION_MODE.PMC_EXACT
-    solver_params.rotation_tim_graph = \
-        teaserpp_python.RobustRegistrationSolver.INLIER_GRAPH_FORMULATION.CHAIN
+    graph_cfg = None
+    try:
+        graph_cfg = _cfg_value(cfg.teaser, "rotation_tim_graph", None)
+        if graph_cfg is None:
+            graph_cfg = _cfg_value(cfg.teaser, "inlier_graph_formulation", None)
+    except Exception:
+        graph_cfg = None
+
+    graph_key = str(graph_cfg).strip().upper() if graph_cfg is not None else "CHAIN"
+    if graph_key == "COMPLETE":
+        solver_params.rotation_tim_graph = teaserpp_python.RobustRegistrationSolver.INLIER_GRAPH_FORMULATION.COMPLETE
+    else:
+        solver_params.rotation_tim_graph = teaserpp_python.RobustRegistrationSolver.INLIER_GRAPH_FORMULATION.CHAIN
     solver_params.rotation_estimation_algorithm = rotation_estimation_algorithm
     solver_params.rotation_gnc_factor = 1.4
     solver_params.rotation_max_iterations = 10000
@@ -240,11 +268,11 @@ def get_teaser_solver(noise_bound, rotation_estimation_algorithm=teaserpp_python
     return solver
 
 def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
-                infra_params=None, veh_params=None, visualize=False):
+                infra_params=None, veh_params=None, visualize=False, *, seed_components: Optional[Tuple[object, ...]] = None):
     infra_points_raw = int(inf_pc.shape[0])
     veh_points_raw = int(veh_pc.shape[0])
 
-    inf_pc, beam_debug = apply_infra_beam_alignment(inf_pc, veh_pc)
+    inf_pc, beam_debug = apply_infra_beam_alignment(inf_pc, veh_pc, seed_components=seed_components)
     infra_points_beam_aligned = int(inf_pc.shape[0])
 
     inf_pcd = create_point_cloud(inf_pc, color=[0, 0.651, 0.929])
@@ -272,7 +300,8 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
         _cfg_value(veh_fpfh, 'radius_feature', cfg.vehicle.fpfh.radius_feature))
 
     # establish correspondences by nearest neighbour search in feature space
-    corrs_A, corrs_B = find_correspondences(A_feats, B_feats, mutual_filter=True)
+    mutual = bool(_cfg_value(_cfg_value(cfg, 'teaser', None), 'mutual_filter', True))
+    corrs_A, corrs_B = find_correspondences(A_feats, B_feats, mutual_filter=mutual)
     A_corr = A_xyz[:, corrs_A]  # np array of size 3 by num_corrs
     B_corr = B_xyz[:, corrs_B]  # np array of size 3 by num_corrs
 
@@ -300,6 +329,8 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
         'infra_points_post_voxel': int(len(inf_pcd.points)),
         'vehicle_points_raw': veh_points_raw,
         'vehicle_points_post_voxel': int(len(veh_pcd.points)),
+        'fpfh_mutual_filter': mutual,
+        'fpfh_num_correspondences': int(A_corr.shape[1]),
     }
     T_refined, icp_debug = maybe_refine_with_icp(T_teaser, inf_pcd, veh_pcd)
     stats.update(beam_debug)
@@ -426,7 +457,8 @@ if __name__ == '__main__':
 
     records = []
     processed = 0
-    with matches_path.open('w', encoding='utf-8') as match_file:
+    # Line-buffered so long runs keep durable progress even if interrupted.
+    with matches_path.open('w', encoding='utf-8', buffering=1) as match_file:
         for inf_id, veh_id, inf_pc, veh_pc, T_true in wrapper:
             if args.max_pairs is not None and processed >= args.max_pairs:
                 break
@@ -444,7 +476,8 @@ if __name__ == '__main__':
                     veh_pc,
                     infra_params=build_params(cfg.infra.fpfh, infra_override),
                     veh_params=build_params(cfg.vehicle.fpfh, veh_override),
-                    visualize=False
+                    visualize=False,
+                    seed_components=(inf_id, veh_id),
                 )
                 stats_mode = dict(stats_mode)
                 stats_mode['mode_name'] = mode_name
@@ -454,6 +487,16 @@ if __name__ == '__main__':
                 if rmse is not None:
                     score = fitness - 0.5 * float(rmse)
                 stats_mode['icp_score'] = score
+                try:
+                    RE_mode, TE_mode = get_RE_TE_by_compare_T_6DOF_result_true(
+                        convert_T_to_6DOF(T_mode),
+                        convert_T_to_6DOF(T_true),
+                    )
+                    stats_mode['mode_RE'] = float(RE_mode)
+                    stats_mode['mode_TE'] = float(TE_mode)
+                except Exception:
+                    stats_mode['mode_RE'] = None
+                    stats_mode['mode_TE'] = None
                 candidates.append(stats_mode)
                 if score > best_score:
                     best_score = score
@@ -482,6 +525,12 @@ if __name__ == '__main__':
                 {
                     'mode_name': cand.get('mode_name'),
                     'icp_fitness': cand.get('icp_fitness'),
+                    'icp_inlier_rmse': cand.get('icp_inlier_rmse'),
+                    'icp_score': cand.get('icp_score'),
+                    'mode_RE': cand.get('mode_RE'),
+                    'mode_TE': cand.get('mode_TE'),
+                    'fpfh_num_correspondences': cand.get('fpfh_num_correspondences'),
+                    'fpfh_mutual_filter': cand.get('fpfh_mutual_filter'),
                     'infra_points_post_voxel': cand.get('infra_points_post_voxel'),
                     'vehicle_points_post_voxel': cand.get('vehicle_points_post_voxel')
                 } for cand in candidates
