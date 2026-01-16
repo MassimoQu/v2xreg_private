@@ -19,3 +19,9 @@
 [submodule "benchmarks/third_party/LiDAR-Registration-Benchmark"]
 	path = benchmarks/third_party/LiDAR-Registration-Benchmark
 	url = https://github.com/HKUST-Aerial-Robotics/LiDAR-Registration-Benchmark.git
+[submodule "third_party/VRoPE"]
+	path = third_party/VRoPE
+	url = https://github.com/CASIA-IVA-Lab/VRoPE.git
+[submodule "third_party/prope"]
+	path = third_party/prope
+	url = https://github.com/liruilong940607/prope.git

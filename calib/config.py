@@ -77,6 +77,11 @@ class SolverConfig:
     min_inliers: int = 1
     confidence_weight_exponent: float = 0.0
     confidence_weight_min: float = 0.0
+    # Solve-time only: allow 180-degree (corner ordering) ambiguity resolution without
+    # changing the correspondence stage (BoxesMatch/CorrespondingDetector).
+    resolve_180_ambiguity: bool = False
+    keep_prior_on_failure: bool = False
+    consider_prior_candidate: bool = False
     # Optional: seed refinement (config may be present in recovered experiment YAMLs).
     seed_refine_top_n: int = 0
     seed_refine_min_matches: int = 0

@@ -60,7 +60,12 @@ class ExtrinsicSolver:
             veh_boxes,
             matches_score_list=matches_score,
             svd_strategy=self.matching_cfg.svd_strategy,
-            resolve_180_ambiguity=getattr(self.matching_cfg, 'resolve_180_ambiguity', False),
+            # Prefer solver-level control so we can optionally enable 180° corner-permutation
+            # handling without perturbing the correspondence stage.
+            resolve_180_ambiguity=bool(
+                getattr(self.solver_cfg, 'resolve_180_ambiguity', False)
+                or getattr(self.matching_cfg, 'resolve_180_ambiguity', False)
+            ),
             max_iterations=getattr(self.solver_cfg, 'max_iterations', 1),
             inlier_threshold_m=getattr(self.solver_cfg, 'inlier_threshold_m', 0.0),
             mad_scale=getattr(self.solver_cfg, 'mad_scale', 2.5),

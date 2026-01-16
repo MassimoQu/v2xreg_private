@@ -82,8 +82,12 @@ class Reader():
             return points[:, :3]
         elif path_pointcloud.endswith('.pcd'):
             pointpillar = o3d.io.read_point_cloud(path_pointcloud)
+            # NOTE: np.asarray(pointpillar.points) may return a zero-copy view into
+            # Open3D-owned memory. If the PointCloud is released, downstream users
+            # can hit undefined behaviour / segfaults when accessing the array.
+            # Return an owning copy to make the lifetime independent.
             points = np.asarray(pointpillar.points)
-            return points
+            return points.copy()
     
     
 

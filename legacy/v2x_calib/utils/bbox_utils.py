@@ -13,10 +13,10 @@ def get_lwh_from_bbox3d_8_3(bbox3d_8_3):
     (e.g., HEAL/PointPillars/SECOND caches) can shuffle corner order, which makes
     index-based edge extraction invalid and breaks volume-based filtering.
 
-    This implementation is order-invariant: for each corner, take the three
-    smallest non-zero distances to other corners (its incident edges). Across 8
-    corners, each edge length appears 8 times, so we can recover the 3 lengths
-    via robust aggregation.
+    This implementation is order-invariant and avoids "short diagonal" traps:
+    it recovers the three side lengths via PCA on the 8 corners. For an ideal
+    cuboid with side lengths (l,w,h), the variance of its corners along each
+    principal axis equals (side/2)^2, so side = 2*sqrt(eigval).
     """
     pts = np.asarray(bbox3d_8_3, dtype=np.float64)
     if pts.shape != (8, 3):
@@ -25,28 +25,16 @@ def get_lwh_from_bbox3d_8_3(bbox3d_8_3):
         # Fallback: axis-aligned extents in the observed frame.
         ext = np.ptp(pts, axis=0) if pts.size else np.zeros(3, dtype=np.float64)
         return float(ext[0]), float(ext[1]), float(ext[2])
-
-    edge_lengths = []
-    for i in range(8):
-        diff = pts[i] - pts
-        dists = np.linalg.norm(diff, axis=1)
-        dists = dists[dists > 1e-6]
-        if dists.size < 3:
-            continue
-        smallest = np.sort(dists)[:3]
-        edge_lengths.extend(smallest.tolist())
-
-    if len(edge_lengths) < 24:
+    center = np.mean(pts, axis=0)
+    rel = pts - center
+    cov = (rel.T @ rel) / 8.0
+    if not np.all(np.isfinite(cov)):
         ext = np.ptp(pts, axis=0)
         return float(ext[0]), float(ext[1]), float(ext[2])
-
-    edge_lengths = np.sort(np.asarray(edge_lengths, dtype=np.float64))
-    # Each edge length (l/w/h) appears 8 times in the 24 samples.
-    a = float(np.median(edge_lengths[0:8]))
-    b = float(np.median(edge_lengths[8:16]))
-    c = float(np.median(edge_lengths[16:24]))
-    # Return in descending order for stability.
-    l, w, h = sorted((a, b, c), reverse=True)
+    eigvals, _ = np.linalg.eigh(cov)
+    eigvals = np.clip(eigvals, 0.0, None)
+    lengths = 2.0 * np.sqrt(eigvals)
+    l, w, h = sorted((float(lengths[0]), float(lengths[1]), float(lengths[2])), reverse=True)
     return l, w, h
 
 def get_bbox3d_8_3_from_xyz_lwh_yaw(xyz, lwh, yaw):

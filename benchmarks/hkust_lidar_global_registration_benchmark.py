@@ -163,21 +163,25 @@ def maybe_refine_with_icp(T_init: np.ndarray, inf_pcd: o3d.geometry.PointCloud,
     max_iter = int(_cfg_value(icp_cfg, 'max_iterations', 50))
     method = _cfg_value(icp_cfg, 'method', 'point_to_plane')
 
-    estimation: o3d.pipelines.registration.TransformationEstimation = \
-        o3d.pipelines.registration.TransformationEstimationPointToPlane() \
-        if method == 'point_to_plane' else \
-        o3d.pipelines.registration.TransformationEstimationPointToPoint()
-
-    criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter)
-    icp_result = o3d.pipelines.registration.registration_icp(
-        source=copy.deepcopy(inf_pcd),
-        target=veh_pcd,
+    # Open3D legacy ICP segfaults on some DAIR-V2X frames in this environment.
+    # Use the tensor implementation which is stable and still CPU-fast enough.
+    source_t = o3d.t.geometry.PointCloud.from_legacy(inf_pcd)
+    target_t = o3d.t.geometry.PointCloud.from_legacy(veh_pcd)
+    init_t = o3d.core.Tensor(T_init, dtype=o3d.core.Dtype.Float64)
+    criteria = o3d.t.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter)
+    if method == 'point_to_plane':
+        estimation = o3d.t.pipelines.registration.TransformationEstimationPointToPlane()
+    else:
+        estimation = o3d.t.pipelines.registration.TransformationEstimationPointToPoint()
+    icp_result = o3d.t.pipelines.registration.icp(
+        source=source_t,
+        target=target_t,
         max_correspondence_distance=max_corr,
-        init=T_init,
+        init_source_to_target=init_t,
         estimation_method=estimation,
-        criteria=criteria
+        criteria=criteria,
     )
-    T_refined = icp_result.transformation
+    T_refined = icp_result.transformation.numpy()
     debug.update({
         'icp_refined': True,
         'icp_fitness': float(icp_result.fitness),
@@ -187,10 +191,21 @@ def maybe_refine_with_icp(T_init: np.ndarray, inf_pcd: o3d.geometry.PointCloud,
 
 def create_point_cloud(points, color=[0, 0.651, 0.929]):
     # 1.000, 0.706, 0.000
-    xyz = points[:, :3]
+    # Open3D's Vector3dVector is sensitive to non-contiguous / non-float64 arrays
+    # and can segfault in some builds. Normalize the array defensively.
+    xyz = np.asarray(points)[:, :3]
+    if xyz.size == 0:
+        xyz = np.zeros((0, 3), dtype=np.float64)
+    else:
+        xyz = np.ascontiguousarray(xyz, dtype=np.float64)
+        # Guard against invalid values; Open3D doesn't always fail gracefully.
+        finite_mask = np.isfinite(xyz).all(axis=1)
+        if not bool(finite_mask.all()):
+            xyz = xyz[finite_mask]
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(xyz)
-    pcd.paint_uniform_color(color)
+    # Avoid paint_uniform_color here: it's only for visualization and has caused
+    # occasional Open3D segfaults in headless/batch runs.
     return pcd
 
 def pcd2xyz(pcd):

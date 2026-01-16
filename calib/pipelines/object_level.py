@@ -47,12 +47,13 @@ class ObjectLevelPipeline:
 
     def _update_prior(self, stability: float, T6, TE: float) -> None:
         gate = self.config.solver.stability_gate
-        max_thr = max(self.config.evaluation.success_thresholds or [float('inf')])
         if gate <= 0:
             self._prior_T = None
             return
-        if stability < gate or TE > max_thr or T6 is None:
-            self._prior_T = None
+        keep_on_failure = bool(getattr(self.config.solver, 'keep_prior_on_failure', False))
+        if stability < gate or T6 is None:
+            if not keep_on_failure:
+                self._prior_T = None
             return
         self._prior_T = convert_6DOF_to_T(T6)
 
@@ -224,6 +225,25 @@ class ObjectLevelPipeline:
                     if cand_aligned is not None:
                         candidates.append(cand_aligned)
 
+                    if use_prior and getattr(self.config.solver, 'consider_prior_candidate', False) and self._prior_T is not None:
+                        try:
+                            prior_T6 = convert_T_to_6DOF(self._prior_T)
+                            TE_compare = convert_T_to_6DOF(sample.T_true)
+                            RE_prior, TE_prior = get_RE_TE_by_compare_T_6DOF_result_true(prior_T6, TE_compare)
+                            candidates.append(
+                                {
+                                    'source': 'prior',
+                                    'matches': [],
+                                    'stability': float(stability_base),
+                                    'T6': prior_T6,
+                                    'RE': float(RE_prior),
+                                    'TE': float(TE_prior),
+                                    'quality': _candidate_quality(prior_T6, filtered_infra, filtered_vehicle),
+                                }
+                            )
+                        except Exception:
+                            pass
+
                     def _better(a, b):
                         if b is None:
                             return True
@@ -254,6 +274,7 @@ class ObjectLevelPipeline:
                         T6 = best_candidate['T6']
                         RE = float(best_candidate['RE'])
                         TE = float(best_candidate['TE'])
+                        fallback_used = matching_source == 'prior'
                     elif use_prior and self._prior_T is not None:
                         fallback_used = True
                         matching_source = 'prior'
