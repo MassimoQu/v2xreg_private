@@ -242,11 +242,22 @@ def pcd2xyz(pcd):
     return np.asarray(pcd.points).T
 
 def extract_fpfh(pcd, radius_normal, radius_feature):
+    return extract_fpfh_with_max_nn(pcd, radius_normal, radius_feature, max_nn_normal=30, max_nn_feature=100)
+
+
+def extract_fpfh_with_max_nn(
+    pcd,
+    radius_normal,
+    radius_feature,
+    *,
+    max_nn_normal: int = 30,
+    max_nn_feature: int = 100,
+):
     pcd.estimate_normals(
-        o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=30))
+        o3d.geometry.KDTreeSearchParamHybrid(radius=radius_normal, max_nn=int(max_nn_normal)))
 
     fpfh = o3d.pipelines.registration.compute_fpfh_feature(
-        pcd, o3d.geometry.KDTreeSearchParamHybrid(radius=radius_feature, max_nn=100))
+        pcd, o3d.geometry.KDTreeSearchParamHybrid(radius=radius_feature, max_nn=int(max_nn_feature)))
     return np.array(fpfh.data).T
 
 def find_knn_cpu(feat0, feat1, knn=1, return_distance=False):
@@ -287,11 +298,21 @@ def Rt2T(R, t):
 
 def get_teaser_solver(noise_bound, rotation_estimation_algorithm=teaserpp_python.RobustRegistrationSolver.ROTATION_ESTIMATION_ALGORITHM.GNC_TLS):
     solver_params = teaserpp_python.RobustRegistrationSolver.Params()
-    solver_params.cbar2 = 1.0
-    solver_params.noise_bound = noise_bound
+    teaser_cfg = _cfg_value(cfg, "teaser", None)
+    solver_params.cbar2 = float(_cfg_value(teaser_cfg, "cbar2", 1.0))
+    solver_params.noise_bound = float(noise_bound)
     solver_params.estimate_scaling = False
-    solver_params.inlier_selection_mode = \
-        teaserpp_python.RobustRegistrationSolver.INLIER_SELECTION_MODE.PMC_EXACT
+
+    # Allow speed/quality trade-offs.
+    inlier_sel = str(_cfg_value(teaser_cfg, "inlier_selection_mode", "PMC_EXACT")).strip().upper()
+    if inlier_sel == "PMC_HEU":
+        solver_params.inlier_selection_mode = teaserpp_python.RobustRegistrationSolver.INLIER_SELECTION_MODE.PMC_HEU
+    elif inlier_sel == "KCORE_HEU":
+        solver_params.inlier_selection_mode = teaserpp_python.RobustRegistrationSolver.INLIER_SELECTION_MODE.KCORE_HEU
+    elif inlier_sel == "NONE":
+        solver_params.inlier_selection_mode = teaserpp_python.RobustRegistrationSolver.INLIER_SELECTION_MODE.NONE
+    else:
+        solver_params.inlier_selection_mode = teaserpp_python.RobustRegistrationSolver.INLIER_SELECTION_MODE.PMC_EXACT
     graph_cfg = None
     try:
         graph_cfg = _cfg_value(cfg.teaser, "rotation_tim_graph", None)
@@ -306,9 +327,9 @@ def get_teaser_solver(noise_bound, rotation_estimation_algorithm=teaserpp_python
     else:
         solver_params.rotation_tim_graph = teaserpp_python.RobustRegistrationSolver.INLIER_GRAPH_FORMULATION.CHAIN
     solver_params.rotation_estimation_algorithm = rotation_estimation_algorithm
-    solver_params.rotation_gnc_factor = 1.4
-    solver_params.rotation_max_iterations = 10000
-    solver_params.rotation_cost_threshold = 1e-16
+    solver_params.rotation_gnc_factor = float(_cfg_value(teaser_cfg, "rotation_gnc_factor", 1.4))
+    solver_params.rotation_max_iterations = int(_cfg_value(teaser_cfg, "rotation_max_iterations", 10000))
+    solver_params.rotation_cost_threshold = float(_cfg_value(teaser_cfg, "rotation_cost_threshold", 1e-16))
     solver = teaserpp_python.RobustRegistrationSolver(solver_params)
     return solver
 
@@ -335,20 +356,43 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
     B_xyz = pcd2xyz(veh_pcd)  # np array of size 3 by M
 
     # extract FPFH features
-    A_feats = extract_fpfh(
+    infra_max_nn_normal = _cfg_value(infra_fpfh, 'max_nn_normal', None)
+    infra_max_nn_feature = _cfg_value(infra_fpfh, 'max_nn_feature', None)
+    veh_max_nn_normal = _cfg_value(veh_fpfh, 'max_nn_normal', None)
+    veh_max_nn_feature = _cfg_value(veh_fpfh, 'max_nn_feature', None)
+
+    A_feats = extract_fpfh_with_max_nn(
         inf_pcd,
         _cfg_value(infra_fpfh, 'radius_normal', cfg.infra.fpfh.radius_normal),
-        _cfg_value(infra_fpfh, 'radius_feature', cfg.infra.fpfh.radius_feature))
-    B_feats = extract_fpfh(
+        _cfg_value(infra_fpfh, 'radius_feature', cfg.infra.fpfh.radius_feature),
+        max_nn_normal=int(infra_max_nn_normal) if infra_max_nn_normal is not None else 30,
+        max_nn_feature=int(infra_max_nn_feature) if infra_max_nn_feature is not None else 100,
+    )
+    B_feats = extract_fpfh_with_max_nn(
         veh_pcd,
         _cfg_value(veh_fpfh, 'radius_normal', cfg.vehicle.fpfh.radius_normal),
-        _cfg_value(veh_fpfh, 'radius_feature', cfg.vehicle.fpfh.radius_feature))
+        _cfg_value(veh_fpfh, 'radius_feature', cfg.vehicle.fpfh.radius_feature),
+        max_nn_normal=int(veh_max_nn_normal) if veh_max_nn_normal is not None else 30,
+        max_nn_feature=int(veh_max_nn_feature) if veh_max_nn_feature is not None else 100,
+    )
 
     # establish correspondences by nearest neighbour search in feature space
     mutual = bool(_cfg_value(_cfg_value(cfg, 'teaser', None), 'mutual_filter', True))
     corrs_A, corrs_B = find_correspondences(A_feats, B_feats, mutual_filter=mutual)
     A_corr = A_xyz[:, corrs_A]  # np array of size 3 by num_corrs
     B_corr = B_xyz[:, corrs_B]  # np array of size 3 by num_corrs
+
+    # Optional cap to speed up TEASER++ on dense scenes.
+    teaser_cfg = _cfg_value(cfg, "teaser", None)
+    max_corrs = _cfg_value(teaser_cfg, "max_correspondences", None)
+    if max_corrs is not None:
+        max_corrs = int(max_corrs)
+        if max_corrs > 0 and A_corr.shape[1] > max_corrs:
+            # Deterministic per-frame sampling.
+            rng = np.random.default_rng(np.random.SeedSequence([3407, *(_stable_seed_token(x) for x in (seed_components or ())) ]))
+            keep = rng.choice(A_corr.shape[1], size=max_corrs, replace=False)
+            A_corr = A_corr[:, keep]
+            B_corr = B_corr[:, keep]
 
     if cfg.rotation_estimation_algorithm == "GNC_TLS":
         rotation_estimation_algorithm = teaserpp_python.RobustRegistrationSolver.ROTATION_ESTIMATION_ALGORITHM.GNC_TLS
@@ -500,6 +544,8 @@ if __name__ == '__main__':
         merged['voxel_size'] = _cfg_value(override, 'voxel_size', _cfg_value(default_block, 'voxel_size', None))
         merged['radius_normal'] = _cfg_value(override, 'radius_normal', _cfg_value(default_block, 'radius_normal', None))
         merged['radius_feature'] = _cfg_value(override, 'radius_feature', _cfg_value(default_block, 'radius_feature', None))
+        merged['max_nn_normal'] = _cfg_value(override, 'max_nn_normal', _cfg_value(default_block, 'max_nn_normal', None))
+        merged['max_nn_feature'] = _cfg_value(override, 'max_nn_feature', _cfg_value(default_block, 'max_nn_feature', None))
         return merged
 
     records = []
