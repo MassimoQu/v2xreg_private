@@ -13,6 +13,7 @@ import argparse
 import json
 from pathlib import Path
 from time import perf_counter
+import contextlib
 from configs.legacy_api import cfg, cfg_from_yaml_file, Logger
 from calib.evaluation.metrics import FrameMetrics, aggregate_metrics
 from v2x_calib.utils import get_RE_TE_by_compare_T_6DOF_result_true, convert_T_to_6DOF
@@ -33,6 +34,35 @@ def _cfg_value(block, key, default=None):
 def _stable_seed_token(value: object) -> int:
     payload = str(value).encode("utf-8", errors="ignore")
     return int(zlib.crc32(payload) & 0xFFFFFFFF)
+
+
+@contextlib.contextmanager
+def _suppress_native_stdout_stderr(enabled: bool) -> None:
+    """Best-effort suppression of native (C/C++) stdout/stderr spam.
+
+    NOTE: TEASER++ (and sometimes Open3D) can be extremely verbose and print per-frame
+    messages from native code. Capturing that output slows down benchmark runs and
+    makes logs unreadable. We redirect file descriptors 1/2 to /dev/null only around
+    the native solve call.
+    """
+    if not enabled:
+        yield
+        return
+    devnull = open(os.devnull, "w")
+    old_stdout = os.dup(1)
+    old_stderr = os.dup(2)
+    try:
+        os.dup2(devnull.fileno(), 1)
+        os.dup2(devnull.fileno(), 2)
+        yield
+    finally:
+        try:
+            os.dup2(old_stdout, 1)
+            os.dup2(old_stderr, 2)
+        finally:
+            os.close(old_stdout)
+            os.close(old_stderr)
+            devnull.close()
 
 
 def compute_vertical_angles(points: np.ndarray) -> np.ndarray:
@@ -328,7 +358,9 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
         rotation_estimation_algorithm = teaserpp_python.RobustRegistrationSolver.ROTATION_ESTIMATION_ALGORITHM.QUATRO
 
     teaser_solver = get_teaser_solver(cfg.teaser.noise_bound, rotation_estimation_algorithm)
-    teaser_solver.solve(A_corr, B_corr)
+    suppress = bool(_cfg_value(_cfg_value(cfg, "teaser", None), "suppress_output", True))
+    with _suppress_native_stdout_stderr(suppress):
+        teaser_solver.solve(A_corr, B_corr)
     solution = teaser_solver.getSolution()
     R_teaser = solution.rotation
     t_teaser = solution.translation
