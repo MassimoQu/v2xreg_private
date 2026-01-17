@@ -1,0 +1,6 @@
+_BASE_CONFIG_: configs/hkust_lidar_global_paper3737_table3.yaml
+
+post_refine:
+  icp:
+    enabled: false
+

@@ -1,0 +1,14 @@
+_BASE_CONFIG_: configs/hkust_lidar_global_paper3737_table3.yaml
+
+# Single-mode run to measure speed/accuracy trade-offs.
+registration_modes:
+  - name: dense
+    infra_fpfh:
+      voxel_size: 0.6
+      radius_normal: 1.2
+      radius_feature: 3.0
+    vehicle_fpfh:
+      voxel_size: 0.5
+      radius_normal: 1.0
+      radius_feature: 2.5
+
