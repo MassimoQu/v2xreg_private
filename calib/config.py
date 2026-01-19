@@ -38,6 +38,7 @@ class FilterConfig:
     per_category_top_k: Dict[str, int] = field(default_factory=dict)
     size_bounds: Dict[str, Dict[str, float]] = field(default_factory=dict)
     top_k_candidates: List[int] = field(default_factory=list)
+    confidence_first_for_detected: bool = False
 
 
 @dataclass
@@ -62,10 +63,19 @@ class MatchingConfig:
     seed_top_k: int = 0
     max_retained_matches: Optional[int] = None
     resolve_180_ambiguity: bool = False
+    # Optional weighting for core correspondence scoring.
+    confidence_weight_exponent: float = 0.0
+    confidence_weight_min: float = 0.0
+    size_similarity_weight: float = 0.0
+    size_similarity_min: float = 0.0
+    confidence_boost_weight: float = 0.0
+    size_similarity_boost_weight: float = 0.0
     occ_hint_rotation_max_deg: float = 0.0
     occ_hint_rotation_step_deg: float = 0.0
     occ_hint_min_peak: float = 0.0
     occ_hint_min_peak_ratio: float = 0.0
+    occ_hint_raw_candidate: bool = False
+    occ_hint_raw_force_ratio: float = 0.0
 
 
 @dataclass
@@ -77,6 +87,8 @@ class SolverConfig:
     min_inliers: int = 1
     confidence_weight_exponent: float = 0.0
     confidence_weight_min: float = 0.0
+    consistency_threshold_m: float = 0.0
+    consistency_min_support: int = 0
     # Solve-time only: allow 180-degree (corner ordering) ambiguity resolution without
     # changing the correspondence stage (BoxesMatch/CorrespondingDetector).
     resolve_180_ambiguity: bool = False
@@ -85,6 +97,12 @@ class SolverConfig:
     # Optional: seed refinement (config may be present in recovered experiment YAMLs).
     seed_refine_top_n: int = 0
     seed_refine_min_matches: int = 0
+    # Optional: ICP refinement on feature centers when a hint is available.
+    icp_refine_iters: int = 0
+    icp_distance_threshold_m: float = 0.0
+    icp_trim_ratio: float = 0.0
+    icp_min_matches: int = 0
+    icp_refine_on_solution: bool = False
 
 
 @dataclass

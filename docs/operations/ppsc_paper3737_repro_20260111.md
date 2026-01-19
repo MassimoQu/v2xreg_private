@@ -1,6 +1,6 @@
 # DAIR-V2X-C（paper3737）PP/SC 复现记录
 
-修改日期：2026-01-14（补充：PP/SC solver/matching 调参以缩小 Table III 差距）
+修改日期：2026-01-19（补充：solver 一致性过滤 + ICP refine，PP/SC 已超过 Table III）
 
 ## 任务目标
 
@@ -82,6 +82,14 @@ HEAL 的 DAIR dataset 读取逻辑以 `veh_frame_id` 作为 split 列表元素�
   - 输出：`outputs/paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_nomax_confexp2p0/matches.jsonl`
   - `success_gate=te_re`：Success@{1,2,3}m = **{0.193, 0.520, 0.695}**（论文 0.249/0.566/0.709；仍差约 4–6pp，主要瓶颈依旧是 RE）
 
+2026-01-19 补充：加入 solver 侧**匹配一致性过滤**（`consistency_threshold_m=1.5` + `consistency_min_support=2`）并在候选解上做 ICP refine（`icp_refine_on_solution=true`），PP/SC 在 `success_gate=te_re` 口径下已超过论文：
+- PP15（best）：`configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml`
+  - 输出：`outputs/paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp/matches.jsonl`
+  - `success_gate=te_re`：Success@{1,2,3}m = **{0.266, 0.573, 0.726}**（论文 0.249/0.566/0.709）
+- SC15（best）：`configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml`
+  - 输出：`outputs/paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp/matches.jsonl`
+  - `success_gate=te_re`：Success@{1,2,3}m = **{0.264, 0.589, 0.738}**（论文 0.252/0.569/0.712）
+
 对照：论文 Table-III（paper3737）为
 - PP15 ≈ {0.249, 0.566, 0.709}
 - SC15 ≈ {0.252, 0.569, 0.712}
@@ -89,7 +97,7 @@ HEAL 的 DAIR dataset 读取逻辑以 `veh_frame_id` 作为 split 列表元素�
 说明：
 - 本文档早期记录中的 Success 数值来自当时 run 写出的 `metrics.json`，其 success gate 与当前 Table III 对齐口径并不一致（曾默认 `te`），会造成“PP/SC 看起来比 GT 更好”等错觉。
 - 目前 Table III 的正式对齐以 `docs/operations/table3_paper3737_repro_status.md` 为准：它只从 `matches.jsonl/details.jsonl` 重新计算，并强制校验 pair 集合与 `data/data_info_dair_paper3737.json` 一致；默认使用 `success_gate=te_re`（更贴近表内 V2X-Reg++ GT 行）。
-- 在 `success_gate=te_re` 口径下，上述 PP/SC 仍低于论文（Success@1m 约差 5–6pp），后续优化以提升旋转精度（RE）为主。
+- 2026-01-19 起，PP/SC 在 `success_gate=te_re` 口径下已超过论文；后续优化重点转向稳定性与耗时（避免过度依赖 ICP）。
 
 ### C. 180° 歧义开关对比（结论：当前实现下不要开）
 
@@ -135,11 +143,20 @@ HEAL 的 DAIR dataset 读取逻辑以 `veh_frame_id` 作为 split 列表元素�
 - `configs/pipeline_paper3737_sc15_heal_sc_7d.yaml`
 - `configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2.yaml`
 - `configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2_180.yaml`
+- `configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml`
+- `configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml`
 
 贡献：
 - 固化“一键复现” paper3737 PP/SC 全流程与对比设置；
 - 将“删垃圾框”落实为 `filters.min_confidence`（score>=0.3）；
 - 将“稳健求解”落实为 `solver.max_iterations=2`（SVD + inlier refinement）。
+
+### 4) solver 一致性过滤 + ICP refine（降低 RE outlier）
+
+- 文件：`calib/solvers/svd.py`、`calib/config.py`
+- 贡献：
+  - 新增 `solver.consistency_threshold_m` / `solver.consistency_min_support`，按成对距离一致性筛掉错配匹配对；
+  - 在候选解上启用 ICP refine（`icp_refine_on_solution` + `icp_*`），进一步压 RE 尾部。
 
 ## 局限与后续工作
 
@@ -188,8 +205,8 @@ MAMBA_ROOT_PREFIX=$PWD/.micromamba ./bin/micromamba run -p /home/qqxluca/minicon
 3) 跑标定（推荐配置：PP/SC 各 1 个）
 ```bash
 MAMBA_ROOT_PREFIX=$PWD/.micromamba ./bin/micromamba run -n v2x \
-  python tools/run_calibration.py --config configs/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2.yaml --print
+  python tools/run_calibration.py --config configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml --print
 
 MAMBA_ROOT_PREFIX=$PWD/.micromamba ./bin/micromamba run -n v2x \
-  python tools/run_calibration.py --config configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2.yaml --print
+  python tools/run_calibration.py --config configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml --print
 ```

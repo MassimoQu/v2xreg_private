@@ -126,6 +126,7 @@
 
 1. 导出时必须记录帧 ID 并在 `DetectionAdapter` 内按 `infra_frame_id/veh_frame_id` 匹配，否则由于 test split 中存在缺帧，检测与 GT 会错位，导致成功率降至 0.6%。  
 2. 修复对齐问题后，`success@2m` 达到 0.44，略优于论文 Table III (PP15) 的 0.41；`success@1m=0.271` 仍略低于 0.33，需进一步提升 detector（更多 epoch/改进 backbone）。  
+   备注：paper3737 的 PP/SC 行已通过 solver 一致性过滤 + ICP refine 超过论文（见 `docs/operations/table3_paper3737_repro_status.md`），但该结论基于 paper3737 双端缓存，不直接等同于本节 HEAL 单端检测基线。  
 3. 缓存统计显示双端平均有 11 个共享目标，远高于旧 Stage1 cache（11 vs 1.6），匹配质量显著改善。
 
 ### 进行中的 fine-tune / 新架构训练（2025-11-24 晚）

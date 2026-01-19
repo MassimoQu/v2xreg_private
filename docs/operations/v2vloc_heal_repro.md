@@ -234,16 +234,10 @@ pgc_pose:
 
 ### 7.1 数据下载现状（重要）
 
-目前能找到的官方入口是：
-- 论文/官方仓库指向的下载页：`https://mobility-lab.seas.ucla.edu/v2v4real/`
+官方入口：
+- `https://mobility-lab.seas.ucla.edu/v2v4real/`（OPV2V-format 下载链接是 UCLA Box，可能需要登录）
 
-但该页面给出的 **LiDAR+Labels(OPV2V format)** 下载链接是 `ucla.app.box.com/...`，在本环境下会跳转到 `ucla.account.box.com/login`（需要 UCLA Box 登录）。
-
-结论：**如果你没有可用的 Box 访问方式，我们无法在服务器上“全自动下载” V2V4Real 的 OPV2V-format 原始数据。**
-
-可行的方式是二选一：
-1) 你手动把数据放到本机 `/data2/v2v4real/{train,validate,test}`（或提供一个不需要登录的直链/镜像）。
-2) 你提供可用的下载方式（例如内部镜像路径、或你已下载好的压缩包路径），我再在服务器上解压并接入 HEAL。
+本机当前已准备好可用的数据（见 7.2.1），无需再下载。
 
 ### 7.2 HEAL 侧已准备好的配置（拿到数据即可开跑）
 
@@ -284,6 +278,8 @@ python opencood/tools/train_ddp.py \
 ### 7.4 关键兼容修复（V2V4Real 必需）
 
 - V2V4Real 的 yaml 里 `lidar_pose` 是 `4x4` 矩阵；OpenCOOD pipeline 期望 `6-DoF` pose 向量：已在 `HEAL/opencood/data_utils/datasets/basedataset/opv2v_basedataset.py` 自动转换（`tfm_to_pose`）。
+- V2V4Real 的 `vehicles.location/angle` 是 **LiDAR-local**（KITTI 风格），而 OpenCOOD 的投影逻辑假设它们是 world：已在 `HEAL/opencood/data_utils/datasets/basedataset/opv2v_basedataset.py` 自动转换为 world-frame。
+- V2V4Real 官方 split 的 frame count 是 **按 ego 视角计数**（train/val/test = 14210/2000/3986），OPV2V 默认只取一个 ego：已在 `HEAL/opencood/data_utils/datasets/basedataset/v2v4real_basedataset.py` 增加 multi-ego 展开（test: 1993 -> 3986）。
 - `PointPillarBaseline` 在 PASTAT 分支缺少 `import torch`：已在 `HEAL/opencood/models/point_pillar_baseline.py` 补齐。
 
 ### 7.5 训练监控（推荐）
@@ -303,3 +299,183 @@ python opencood/tools/train_watchdog.py \
   --num_workers 4 \
   --run_sweep_on_finish
 ```
+
+### 7.6 当前 V2V4Real 复现实验结果（2026-01-17）
+
+训练 run：
+- run 目录：`HEAL/opencood/logs/v2v4real_pastat_noise1_fixlabels_initfcooper_ddp_g0123_2026_01_17_00_12_14`
+- 初始化：`/data2/V2V4REAL/Models/PointPillar_Fcooper`
+- checkpoint：`net_epoch60.pth`、`net_epoch_bestval_at17.pth`
+
+评测（test=3986 ego-view frames，σ=1.0/1.0 (m/deg)，noise_target=all）：
+- 本仓库 bestval@17：`AP030507_none_paper3986_noise11_bestval_afterfix.yaml` 为 **52.30 / 48.70 / 32.64**（AP@0.3/0.5/0.7）
+- 论文 Table 2（V2V4Real, PASTAT）：**63.52 / 61.51 / 40.29**
+
+结论：当前还差约 **12.8 AP@0.5**（以及 7.7 AP@0.7）。主要原因是：上述 run 训练阶段发生在 multi-ego 修复之前（当时 train len 只有 7105），下一步需要用 **multi-ego + 修正 label** 的新 pipeline 重新训练。
+
+### 7.7 Multi-ego + World-label 的新训练（进行中）
+
+当前正在训练的 run（已经启用 multi-ego 展开 + world-frame label 修复）：
+- run 目录：`HEAL/opencood/logs/v2v4real_pastat_noise1_multiego_worldlabels_initfcooper_ddp_g0123_2026_01_17_10_06_25`
+- DDP：`CUDA_VISIBLE_DEVICES=0,1,2,3`（4 卡）
+- 初始化：`/data2/V2V4REAL/Models/PointPillar_Fcooper`
+- 数据长度（log 打印）：train=14210, val=1496（val.zip 本身只有 748 timestamps，因此 ego-view 只有 1496；论文写 2000，可能是另一版 split）
+
+当前训练进度建议看：
+- 训练日志：`HEAL/opencood/logs/v2v4real_pastat_noise1_multiego_worldlabels_initfcooper_ddp_g0123_2026_01_17_10_06_25/train_stdout.log`
+- 自动状态（每 60s 写一条，含 GPU util/mem）：`HEAL/opencood/logs/v2v4real_pastat_noise1_multiego_worldlabels_initfcooper_ddp_g0123_2026_01_17_10_06_25/live_status.jsonl`
+- watchdog（会 attach 到训练，后续如遇 crash 会自动重启）：`HEAL/opencood/logs/v2v4real_pastat_noise1_multiego_worldlabels_initfcooper_ddp_g0123_2026_01_17_10_06_25/watchdog_stdout.log`
+
+中途评测（test=3986，σ=1.0/1.0）：
+
+```bash
+cd /home/qqxluca/v2xreg_private/HEAL
+CUDA_VISIBLE_DEVICES=8 \
+MAMBA_ROOT_PREFIX=$HOME/.micromamba ~/.local/micromamba/bin/micromamba run -n heal \
+python opencood/tools/inference_w_noise.py \
+  --model_dir opencood/logs/v2v4real_pastat_noise1_multiego_worldlabels_initfcooper_ddp_g0123_2026_01_17_10_06_25 \
+  --fusion_method intermediate \
+  --pos-std-list 1 --rot-std-list 1 \
+  --sweep-mode paired \
+  --noise-target all \
+  --note _paper3986_noise11
+```
+
+训练完成后本机已产出（2026-01-17）：
+- bestval@17（`AP030507_none_paper3986_noise11_bestval.yaml`）：**61.54 / 57.50 / 40.04**
+- epoch60（`AP030507_none_paper3986_noise11_epoch60.yaml`）：**58.24 / 54.32 / 35.57**
+
+与论文 Table 2（V2V4Real, σ=1/1）相比：
+- 论文：**63.52 / 61.51 / 40.29**
+- 当前 bestval@17：AP@0.3 低 1.98，AP@0.5 低 4.01，AP@0.7 低 0.25（已经很接近 AP@0.7，但 AP@0.5 仍有差距）
+
+### 7.8 评测口径敏感点：`score_threshold`
+
+OpenCOOD 的后处理会先按 `score_threshold` 过滤候选框；这个阈值会显著影响 AP@0.3/0.5（recall 变化大）。
+
+在 **同一个 bestval@17 checkpoint** 上，仅把 `score_threshold` 从 0.2 临时改到 0.05（只影响评测过滤，不改模型/权重）：
+- `AP030507_none_paper3986_noise11_bestval_score005.yaml`：**65.39 / 59.12 / 40.29**
+
+这说明：当前和论文在 AP@0.5 的差距里，存在一部分来自 **后处理/评测口径**（论文具体阈值未在 PDF 里明确）。
+
+### 7.9 GNSS noise sweep（σ=0..4 m/deg）
+
+用 `HEAL/opencood/tools/inference_w_noise.py:68` 做 `pos_std, rot_std = 0..4` 的 sweep（paired：`(0,0),(1,1),...,(4,4)`），并输出整条曲线到 yaml：
+- `AP030507_none_final_all.yaml`：`noise_target=all`
+- `AP030507_none_final_nonego.yaml`：`noise_target=non-ego`
+
+注意：本复现的 V2V4Real 设置本质是 **GT pose + 合成噪声**，并且 `pose_confidence` 由 `lidar_pose_clean` 与 `lidar_pose` 的误差“oracle”计算（见 `HEAL/opencood/utils/pose_utils.py:23`），因此它更像论文 V2V4Real 的设定，而不是严格的“无初值/未知噪声”。
+
+## 8. FreeAlign / V2XReg++ / PASTAT 的“无可靠初值”对比（V2V4Real 实测）
+
+你关心的“无初值/错初值/未知噪声”更接近 **外参/位姿校正**：先用 box/occ 等线索估计相对位姿，再把对齐后的特征喂给融合检测网络。
+
+本仓库已把 pose correction 统一接入 `HEAL/opencood/tools/inference_w_noise.py`：
+- `--pose-correction none|v2xregpp_initfree|v2xregpp_stable|freealign_paper|freealign_repo`
+- 需要 `--stage1-result <stage1_boxes.json>`（FreeAlign / V2XReg++ 都依赖 stage1 box cache）
+
+### 8.1 V2V4Real（test=3986 ego-view frames）对比：σ=1m/1deg，noise_target=non-ego
+
+使用相同 detector（PASTAT bestval@17）、相同噪声注入、相同后处理配置，仅改变 `--pose-correction`。
+
+stage1 cache：
+- `HEAL/opencood/logs/v2v4real_stage1_pointpillar_from_pastat_bestval17_80boxes/test/stage1_boxes.json`
+
+结果（AP@0.3/0.5/0.7）：
+- none：0.6178 / 0.5763 / 0.4011（`AP030507_none_paper3986_noise11_nonego.yaml`）
+- v2xregpp_initfree：0.6189 / 0.5774 / 0.4032（`AP030507_v2xregpp_initfree_paper3986_noise11_nonego.yaml`）
+- freealign_paper：0.5823 / 0.5543 / 0.3942（`AP030507_freealign_paper_paper3986_noise11_nonego.yaml`）
+
+对应的相对位姿误差统计（mean，单位 m/deg；越小越好）：
+- none：1.248 / 0.791
+- v2xregpp_initfree：1.027 / 0.711（对齐略有改善，AP 也略升）
+- freealign_paper：29.117 / 50.438（大量帧对齐失败；FreeAlign 依赖 co-view objects，V2V4Real 上 overlap 稀疏时非常不稳定）
+
+### 8.2 失败原因示例（FreeAlign：prior-free 但依赖 overlap）
+
+在 `idx=0`（stage1 cache 的第 0 帧）里，两车真实相对平移约 75m，但 FreeAlign 估计成 ~10m 量级，导致相对误差 ~70m：
+- `true T_ego_cav: xy≈(-75.7, 5.2)m, yaw≈-16.7°`
+- `freealign est: xy≈(-6.6, -9.5)m, yaw≈-0.24°`
+
+这类场景里两车 co-view objects 很少，图匹配容易产生错误对应，从而让刚体估计崩掉；这也是论文 Fig.1(b) 对 FreeAlign 的核心批评点。
+
+### 8.3 子集 stress test（前 200 帧，σ=0/2/4/8，noise_target=non-ego）
+
+为了快速观察“大噪声 + init-free”的趋势，我在前 200 帧上做了 `(0,0),(2,2),(4,4),(8,8)` sweep：
+- `AP030507_none_robust_head200.yaml`
+- `AP030507_v2xregpp_initfree_robust_head200.yaml`
+- `AP030507_freealign_paper_robust_head200.yaml`
+
+注意：这是 **子集**（不是论文指标口径），但可以直观看到：FreeAlign 在该子集上 AP 明显掉到 ~0.50 且相对位姿误差非常大；V2XReg++ 整体更稳。
+
+### 8.4 全量曲线：σ=0..4（m/deg），comm_range=200（V2V4Real test=3986）
+
+为了严格保证“协同感知部分完全一样”，这里 **强制 `comm_range=200`**（`--comm-range-override 200`），避免噪声改变 agent 间距离筛选，从而把 “通信拓扑变化” 混进对齐方法对比里。
+
+配置：
+- detector：PASTAT bestval@17（同 8.1）
+- 噪声：Gaussian，paired sweep：`(pos_std,rot_std)=(0,0),(1,1),...,(4,4)`，`noise_target=non-ego`
+- stage1 cache（V2XReg++ / FreeAlign 共用）：`HEAL/opencood/logs/v2v4real_stage1_pointpillar_from_pastat_bestval17_80boxes/test/stage1_boxes.json`
+
+运行命令（示例：V2XReg++；其它方法只改 `--pose-correction`）：
+
+```bash
+cd /home/qqxluca/v2xreg_private/HEAL
+CUDA_VISIBLE_DEVICES=0 \
+MAMBA_ROOT_PREFIX=$HOME/.micromamba ~/.local/micromamba/bin/micromamba run -n heal \
+python opencood/tools/inference_w_noise.py \
+  --model_dir opencood/logs/v2v4real_pastat_noise1_multiego_worldlabels_initfcooper_ddp_g0123_2026_01_17_10_06_25 \
+  --fusion_method intermediate \
+  --pos-std-list 0,1,2,3,4 --rot-std-list 0,1,2,3,4 \
+  --sweep-mode paired \
+  --noise-target non-ego \
+  --comm-range-override 200 \
+  --num-workers 0 \
+  --save_vis_interval 100000000 \
+  --log-interval 400 \
+  --note _comm200_paper \
+  --pose-correction v2xregpp_initfree \
+  --stage1-result opencood/logs/v2v4real_stage1_pointpillar_from_pastat_bestval17_80boxes/test/stage1_boxes.json
+```
+
+输出（曲线 yaml）：
+- none：`AP030507_none_comm200_paper.yaml`
+- v2xregpp_initfree：`AP030507_v2xregpp_initfree_comm200_paper.yaml`
+- freealign_paper：`AP030507_freealign_paper_comm200_paper.yaml`
+
+绘制曲线：
+- AP@0.5：`docs/operations/v2v4real_extrinsic_sweep_comm200_paper_ap50.png`
+- AP@0.3/0.5/0.7：`docs/operations/v2v4real_extrinsic_sweep_comm200_paper_ap.png`
+
+结果（AP@0.3 / 0.5 / 0.7）：
+
+**none**
+- σ=0：0.6181 / 0.5751 / 0.4014
+- σ=1：0.6142 / 0.5722 / 0.3977
+- σ=2：0.6079 / 0.5686 / 0.3955
+- σ=3：0.5991 / 0.5627 / 0.3941
+- σ=4：0.5942 / 0.5602 / 0.3926
+
+**v2xregpp_initfree**
+- σ=0：0.6183 / 0.5753 / 0.4016
+- σ=1：0.6153 / 0.5734 / 0.3999
+- σ=2：0.6094 / 0.5698 / 0.3984
+- σ=3：0.6028 / 0.5658 / 0.3973
+- σ=4：0.5978 / 0.5627 / 0.3950
+
+**freealign_paper**
+- σ=0：0.5809 / 0.5529 / 0.3932
+- σ=1：0.5808 / 0.5527 / 0.3928
+- σ=2：0.5799 / 0.5522 / 0.3931
+- σ=3：0.5795 / 0.5519 / 0.3928
+- σ=4：0.5789 / 0.5516 / 0.3928
+
+对应的相对位姿误差（mean，单位 m/deg；越小越好）：
+- none：σ=4 时约 **5.019m / 3.149°**
+- v2xregpp_initfree：σ=4 时约 **3.999m / 2.556°**（比 none 稍好，因此 AP 也有小幅提升）
+- freealign_paper：σ=0..4 始终约 **29m / 50°**（灾难性错误匹配占比高，导致整体检测显著变差且对噪声不敏感）
+
+备注：
+- `freealign_repo`（ported released repo matching）在 test=3986、默认 `max_boxes=60` 下耗时过高，4h 预算内跑不完；如果你需要这条曲线，我可以：
+  1) 先用更小的 `--freealign-max-boxes` 跑完整曲线（速度更快但可能影响其最优性能）；或
+  2) 针对 `HEAL/opencood/pose/freealign_repo.py` 做等价加速（不改变输出）后再跑。

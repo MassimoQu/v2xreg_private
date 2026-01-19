@@ -309,6 +309,12 @@ class MatchingEngine:
             descriptor_metric=self.config.descriptor_metric,
             seed_top_k=self.config.seed_top_k,
             resolve_180_ambiguity=getattr(self.config, 'resolve_180_ambiguity', False),
+            confidence_weight_exponent=getattr(self.config, 'confidence_weight_exponent', 0.0),
+            confidence_weight_min=getattr(self.config, 'confidence_weight_min', 0.0),
+            size_similarity_weight=getattr(self.config, 'size_similarity_weight', 0.0),
+            size_similarity_min=getattr(self.config, 'size_similarity_min', 0.0),
+            confidence_boost_weight=getattr(self.config, 'confidence_boost_weight', 0.0),
+            size_similarity_boost_weight=getattr(self.config, 'size_similarity_boost_weight', 0.0),
         )
         matches_score = matcher.get_matches_with_score()
         max_matches = getattr(self.config, 'max_retained_matches', None)

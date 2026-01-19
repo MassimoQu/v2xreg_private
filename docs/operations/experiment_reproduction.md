@@ -39,8 +39,11 @@ Place the official DAIR-V2X cooperative split under `data/DAIR-V2X/` following t
 
 ### 2.2 Detection caches
 
-* **PointPillars (PP)**: already stored as `data/DAIR-V2X/detected/detected_boxes_test.json`.
-* **SECOND (SC)**: `data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json`.
+* **PointPillars (PP)**: `data/DAIR-V2X/detected/detected_boxes_test.json` (legacy test split).
+* **SECOND (SC)**: `data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json` (legacy test split).
+* **paper3737 Table III caches** (3737/3737 coverage):
+  * PP: `data/DAIR-V2X/detected/paper3737_pp_dual/stage1_boxes.json`
+  * SC: `data/DAIR-V2X/detected/paper3737_sc_dual/stage1_boxes.json`
 * **HEAL dual-agent export**: convert any pair of HEAL stage-1 logs with `tools/heal_stage1_to_detection_cache.py`, see `docs/operations/heal_detection_status.md`.
 
 All three files follow the format expected by `calib/data/detection_adapter.py`, i.e. a dictionary keyed by frame indices with `pred_corner3d_np_list` entries. Set `data.use_detection=true` and point `data.detection_cache` to the desired JSON when running Box-detection experiments.
@@ -74,15 +77,26 @@ Key knobs (all live inside `configs/pipeline.yaml` unless stated otherwise):
 | V2X-Reg++ (oDist) | `matching.core_components: ['centerpoint_distance', 'vertex_distance']` (already the default) |
 | V2X-Reg (oIoU) | change to `matching.core_components: ['iou']` |
 | `GT^∞` / `GT^25` / `GT^15` / `GT^10` | `filters.top_k: 0/25/15/10` (`top_k=0` keeps all boxes) |
-| PointPillar / SECOND detections | set `data.use_detection: true` and pick a cache via `data.detection_cache` (PointPillar → `data/DAIR-V2X/detected/detected_boxes_test.json`, SECOND → `data/DAIR-V2X/detected/dairv2x-second_uncertainty/test/stage1_boxes.json`) |
+| PointPillar / SECOND detections | set `data.use_detection: true` and pick a cache via `data.detection_cache` (Table III paper3737: PP → `data/DAIR-V2X/detected/paper3737_pp_dual/stage1_boxes.json`, SC → `data/DAIR-V2X/detected/paper3737_sc_dual/stage1_boxes.json`) |
 | Weighted vs mean vs “highest” SVD (wSVD/mSVD/hSVD) | wSVD is the default (`matching.matches2extrinsic: weightedSVD`). mSVD = set `matching.matches2extrinsic: evenSVD`. hSVD = keep wSVD but change `matching.filter_strategy: topRetained` so only the highest-score pair is fed to SVD. |
 | Using detections vs GT boxes | toggle `data.use_detection`. When it is `false`, GT boxes from DAIR-V2X are used. |
 
 Every run writes `outputs/<tag>/metrics.json` with the `mRRE@λ`, `mRTE@λ` and `success@λ` metrics that appear in Table III, along with `matches.jsonl` (per-frame RE/TE, stability and timing). Adjust `output.tag` in the config to keep runs separate.
 
-### 3.1 HEAL detections (Table III rows with `PP`/`SC`)
+### 3.1 V2X-Reg++ PP15 / SC15 (paper3737)
 
-Use `configs/pipeline_detection.yaml`. It already loads `data/DAIR-V2X/detected/heal_stage1_dual_detection_cache.json` and sets `solver.stability_gate=3` to mimic the “stability guided” runs discussed in the paper. Command:
+Best-performing Table III runs (use `success_gate=te_re` by default):
+```bash
+python tools/run_calibration.py --config configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml --print
+python tools/run_calibration.py --config configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml --print
+```
+Outputs:
+- PP15: `outputs/paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp/matches.jsonl`
+- SC15: `outputs/paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp/matches.jsonl`
+
+These configs add solver-side correspondence consistency filtering plus ICP refinement on the solution to reduce RE outliers; both PP/SC exceed the paper Table III numbers under the `te_re` gate.
+
+For HEAL dual-agent detection baselines (not the PP/SC rows), continue using:
 ```bash
 python tools/run_calibration.py --config configs/pipeline_detection.yaml
 ```

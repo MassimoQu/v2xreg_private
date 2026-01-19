@@ -69,15 +69,16 @@
   - `success@1m=0.271`（488 帧，`mTE@1m=0.562m`，`mRE@1m=0.94°`）；
   - `success@2m=0.440`（792 帧，`mTE@2m=0.90m`，`mRE@2m=1.21°`）；
   - `avg_time=0.052s`（PyTorch 计算 + I/O 总耗时）。
-- 与论文 Table III（PP15 行，`success@1m≈0.33`，`success@2m≈0.41`）相比：
+- 与论文 Table III（PP15 行，`success@1m≈0.33`，`success@2m≈0.41`）相比（注意该对比仅针对本单端 HEAL 检测基线）：
   1. 修复 index 错位后成功率由 0.006 → 0.271，验证了“车/路两端检测需配对到一致帧 ID”这一 bug。
   2. 由于当前单端 detector 仅训练 20 epoch，`success@1m` 仍低于论文 0.33；需进一步 fine-tune 或引入更强 backbone 以缩小差距。
   3. `success@2m` 已达到 0.44，优于论文表格（0.41），说明匹配策略本身没有退化。
+   备注：paper3737 的 PP/SC 行已通过 solver 一致性过滤 + ICP refine 超过论文（见 `docs/operations/table3_paper3737_repro_status.md`），但该结论依赖 paper3737 双端缓存，与本单端 HEAL 检测基线不直接等价。
 
 ## 结果 & 分析
 1. **检测训练**：PointPillars 单端模型在 20 epoch 后即可稳定收敛，验证损失分别为 0.81（车端）、0.52（路端），推理耗时 <0.5s/帧，可直接用于 Stage-1 导出。
 2. **缓存对齐**：原有 HEAL Stage-1 导出以连续索引为 key，缺帧时会导致 calib pipeline 读到“错位帧”。通过在导出阶段写入 `veh_frame_id/infra_frame_id` 并在 Adapter 里按 ID 匹配，成功率由 0.006 → 0.271，证实该对齐 bug 是主要根因。
-3. **指标差距**：与论文的 PP15 行相比，`success@1m` 仍低 ~0.06。初步判断主要来自 detector 精度和训练时长，可考虑：
+3. **指标差距**：与论文的 PP15 行相比，本单端 HEAL 基线的 `success@1m` 仍低 ~0.06。初步判断主要来自 detector 精度和训练时长，可考虑：
    - 延长训练至 30 epoch，并尝试更大的 batch（12→16）以降低噪声；
    - 继续清洗 detection cache，排除极少数“空场景”(未输出任何框)；
    - 评估 `matching.distance_thresholds` 的更细粒度调参。
@@ -86,7 +87,7 @@
 ## 后续工作
 1. 继续训练两个单端 detector（目标 30 epoch+，观察验证损失是否进一步下降）。
 2. 对 `matches.jsonl` 中失败帧做类别统计，决定是否拓展 `priority_categories`（如加入 `van`）或调整 `distance_thresholds`。
-3. 若达到论文指标，更新 `docs/operations/experiment_progress.md` & Table III 复现条目。
+3. 若后续单端 HEAL 检测达到论文指标，更新 `docs/operations/experiment_progress.md` & Table III 复现条目（当前 paper3737 的 PP/SC 已在其它配置上达标）。
 
 ## 2025-11-25 GT vs Detection (同帧) 结果
 - `configs/pipeline_gt_detection_subset.yaml`（GT、1765 帧）→ `outputs/heal_gt_single_subset/metrics.json`：

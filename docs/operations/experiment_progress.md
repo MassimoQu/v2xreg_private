@@ -1,4 +1,4 @@
-# V2X-Reg++ 实验复现进度（更新时间：2026-01-15）
+# V2X-Reg++ 实验复现进度（更新时间：2026-01-19）
 
 > 说明：本文件早期内容包含基于 `top3000` 子集的历史记录；**Table III 的正式复现以 `paper3737=3737 pairs` 为准**。
 
@@ -8,14 +8,14 @@
 - 口径约束：**所有指标只从单次 run 的全量 `matches.jsonl/details.jsonl` 重算**（强制 3737/3737 且 pair 集合与 `data/data_info_dair_paper3737.json` 一致），禁止“拼碎片”。
 - Success 口径：Table III 对齐默认使用 `te_re`（`TE<thr` 且 `RE<thr`，thr 单位分别为 m/°）；以 `table3_paper3737_repro_status.md` 的 **jsonl 重算**为准。注意历史 `metrics.json` 可能未写入 `success_gate` 或采用了不同 gate（曾导致 PP/SC 看似优于 GT 的假象），不要直接用 `metrics.json` 做跨方法对比。
 - 当前主要偏差：
-  - **HKUST baselines（FGR / Quatro / Teaser++）** 仍显著低于论文（见差距表最后三行），正在以 `paper3737_sample200_seed42` 子集做参数对齐（base vs ratio0.5 vs mutualoff），再决定是否重跑全量 shards。
-    - 当前正在跑（200 pairs, seed42）：
-      - ratio0.5：`outputs/hkust_teaser/tmp/hkust_tune/gnctls_ratio0p5_sample200_seed42_200/matches.jsonl`（log: `logs/hkust_tune/gnctls_ratio0p5_sample200_seed42_200.log`）
-      - base：`outputs/hkust_teaser/tmp/hkust_tune/gnctls_base_sample200_seed42_200/matches.jsonl`（log: `logs/hkust_tune/gnctls_base_sample200_seed42_200.log`）
-      - ratio0.5+mutualoff：`outputs/hkust_teaser/tmp/hkust_tune/gnctls_ratio0p5_mutualoff_sample200_seed42_200/matches.jsonl`（log: `logs/hkust_tune/gnctls_ratio0p5_mutualoff_sample200_seed42_200.log`）
-  - **V2X-Reg++ 检测（PP15/SC15）** 在 `te_re` 口径下仍低于论文，主要差在 RE（存在大量 `TE<1m` 但 `RE>=1°` 的帧）。本轮通过更严格的 SVD inlier gating + 放宽检测匹配阈值，已将差距缩小：
-    - PP15（closest/best）：`outputs/paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_nomax_confexp2p0/matches.jsonl` → Success@1/2/3 = **19.32/51.99/69.52**（论文 24.91/56.62/70.94，Δpp -5.59/-4.63/-1.42）
-    - SC15（closest/best）：`outputs/paper3737_sc15_heal_sc_corners_conf0p3_iter2_inlier0p75_det1p2/matches.jsonl` → Success@1/2/3 = **20.44/54.72/71.07**（论文 25.15/56.89/71.23，Δpp -4.71/-2.17/-0.16）
+  - **HKUST baselines（FGR / Quatro / Teaser++）** 仍显著偏离论文，且 Time 口径仍不一致（论文约 20s，当前 closest 多为 0.15–0.30s 或 keepall 160s+）。最新 full runs 已切到 `paper3737_hkust_budget0p1_maxfeat2000_*_full`：
+    - FGR：Success@1/2/3 = **21.43/35.40/42.23**（`outputs/hkust_teaser/paper3737_hkust_budget0p1_maxfeat2000_fgr_full/matches.jsonl`）
+    - Quatro：Success@1/2/3 = **22.83/38.35/46.00**（`outputs/hkust_teaser/paper3737_hkust_budget0p1_maxfeat2000_quatro_full/matches.jsonl`）
+    - Teaser++：Success@1/2/3 = **22.69/38.40/45.79**（best；`outputs/hkust_teaser/paper3737_hkust_budget0p1_maxfeat2000_gnctls_full/matches.jsonl`）
+    - sample200（GNCTLS）调参已完成：base **8.5/11.5/13.5**，ratio0.5 **23.0/31.5/36.0**，ratio0.5+mutualoff **26.5/36.0/40.5**；仍无明显对齐趋势。
+  - **V2X-Reg++ 检测（PP15/SC15）** 在 `te_re` 口径下已超过论文；通过 solver 侧“一致性匹配过滤 + ICP refine”缓解 RE 偏差，最新 best：
+    - PP15：best = `outputs/paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp/matches.jsonl` → Success@1/2/3 = **26.57/57.27/72.60**（Δpp +1.66/+0.65/+1.66）
+    - SC15：best = `outputs/paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp/matches.jsonl` → Success@1/2/3 = **26.41/58.92/73.78**（Δpp +1.26/+2.03/+2.55）
 - 已尝试将 HKUST baselines 切到 `configs/hkust_lidar_global_paper3737_table3.yaml`（subsample_ratio=1.0）以追论文，但单帧耗时上升到 100–200s 且精度更差，已中止该路线（保留 ratio0.5 版本作为当前对比基线）。
 
 ## 0. 数据与配置兼容说明
@@ -43,6 +43,7 @@
 - 检测框输入（PP/SC）成功率下降约 20–30%，主要受匹配失败影响，但相比论文值仍在合理范围。  
 - SVD 变体显示：wSVD > mSVD > hSVD，与 Table III 的讨论一致。  
 - oIoU 基线延迟显著（>1 s）且准确率低，说明旧版关联策略不适合大规模复现。
+- 注意：以上表格为 **Top-3000 子集** 的历史结果；paper3737 Table III 的 PP/SC 现已在 `docs/operations/table3_paper3737_repro_status.md` 中更新为超过论文。
 
 ### 1.1 2025-11-25 全量复现（`configs/pipeline_top3000.yaml`）
 
@@ -105,6 +106,18 @@
 **分析**  
 - HEAL 检测结果与 `docs/operations/heal_detection_status.md` 记录一致：成功率 ~19% 受匹配质量制约，需要更好的 RSU 模型。  
 - 初步的 BEV descriptor 实验（使用 HEAL feature cache）保留了与 GT 类似的成功率，但只有 60% 帧生成匹配，说明需要更高质量的特征抽样；`v2icalib_feature_extension.md` 后续可引用这批数据进行讨论。
+
+### 4.1 2026-01-19 多路线对比（Top-3000 + Camera test）
+
+| 路线 | `success@1m` | `success@2m` | `success@3m` | 备注 |
+| --- | --- | --- | --- | --- |
+| V2X-Reg++ 后融合基线（Full LiDAR, top-25） | 0.1717 | 0.3853 | 0.4823 | `outputs/full_lidar_late25/metrics.json` |
+| LiDAR BEV descriptor tuned | 0.2187 | 0.4240 | 0.5133 | `outputs/full_lidar_bevdesc_tuned/metrics.json` |
+| Camera image descriptor（test split 1789） | 0.1945 | 0.4036 | 0.4941 | `outputs/full_camera_desc_3m/metrics.json` / `configs/pipeline_camera_desc_3m.yaml` |
+| Detection + BEV descriptor + occ hint ratio=1.5 | 0.2353 | 0.4473 | 0.5367 | `outputs/full_det_desc_v2cache_r15/metrics.json` / `configs/pipeline_detection_desc_v2cache_full_r15.yaml` |
+
+**备注**  
+- Camera 行使用 `data/DAIR-V2X/cooperative/test_data_info.json`（1789 帧），与 Top-3000 并非同一集合，指标仅用于路线内比较。
 
 ## 5. ICP / PICP（LiDAR-Registration-Benchmark）
 

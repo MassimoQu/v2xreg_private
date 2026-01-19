@@ -243,7 +243,35 @@ class DatasetManager:
             if self._canonicalize_detection_corners:
                 infra_boxes = self._canonicalize_boxes(infra_boxes)
                 veh_boxes = self._canonicalize_boxes(veh_boxes)
-        occ_map = record.get('occ_map_level0') if load_hints else None
+        occ_map = None
+        if load_hints:
+            occ_map = record.get('occ_map_level0')
+            if occ_map is None:
+                occ_paths = record.get('occ_map_level0_path')
+                if occ_paths:
+                    def _load_occ(path):
+                        try:
+                            data = np.load(path)
+                        except Exception:
+                            return None
+                        try:
+                            if hasattr(data, 'files'):
+                                if 'occ_map_level0' in data.files:
+                                    return data['occ_map_level0']
+                                if data.files:
+                                    return data[data.files[0]]
+                            return data
+                        finally:
+                            try:
+                                data.close()
+                            except Exception:
+                                pass
+                    if isinstance(occ_paths, (list, tuple)):
+                        occ_map = []
+                        for p in occ_paths:
+                            occ_map.append(_load_occ(p) if p else None)
+                    else:
+                        occ_map = _load_occ(occ_paths)
         bev_range = record.get('bev_range') if load_hints else None
         return infra_boxes, veh_boxes, occ_map, bev_range
 
@@ -388,8 +416,13 @@ class DatasetManager:
             )
             if detections_vehicle:
                 self._maybe_configure_detection_vehicle_flip(veh_boxes, detections_vehicle)
-                if self._detection_vehicle_flip_y:
+            elif feature_vehicle:
+                self._maybe_configure_detection_vehicle_flip(veh_boxes, feature_vehicle)
+            if self._detection_vehicle_flip_y:
+                if detections_vehicle:
                     detections_vehicle = self._apply_flip_y(detections_vehicle)
+                if feature_vehicle:
+                    feature_vehicle = self._apply_flip_y(feature_vehicle)
             if self._sensor_frame == 'camera':
                 coop = self._get_cooperative_reader(inf_id, veh_id)
                 try:

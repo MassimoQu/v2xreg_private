@@ -50,6 +50,30 @@ HEAL/OpenCOOD 里经常同时讨论两件事：
 - 画图：`HEAL/opencood/tools/plot_noise_sweep.py:158`
   - 读多个 `AP030507_*.yaml`，对同一张图叠加多条曲线（按 x 排序、默认 `xlim=0,10`）。
 
+### 2.2.1 本次曲线的关键“实现设置”（你问的细节）
+
+1) **噪声档位**
+   - 平移 sweep：`--pos-std-list 0,1,2,...,10` 且 `--rot-std-list 0`（paired 会把 rot 扩成同长度的全 0）
+   - 旋转 sweep：`--pos-std-list 0` 且 `--rot-std-list 0,1,2,...,10`
+
+2) **噪声施加对象**
+   - 使用 `--noise-target non-ego`，只噪声化非 ego，避免“相对误差双倍”（第 2.1 节）。
+
+3) **评测样本数**
+   - 若文件名里带 `n50/n200`，通常对应 `--max-eval-samples 50/200` 的快速 sweep（不是全量 test）。  
+   - 你可以通过 YAML 里的 `rel_success_at_m` 分母反推“有效 pair 数”（例如 0.8510638297≈40/47）。
+
+4) **随机性**
+   - `inference_w_noise.py` 里 `np.random.seed(303)` 只在 dataset build 时设置一次（`inference_w_noise.py:283`），
+     且每个噪声档位不会重置 seed，因此不同档位的噪声采样不是“同一随机序列缩放”，而是连续消耗 RNG 的结果。
+     若要严格可比，可改为每个 noise level 都 `np.random.seed(fixed_seed)`（需要后续 patch）。
+
+5) **v2xregpp 的关键开关**
+   - `--pose-correction v2xregpp_initfree|v2xregpp_stable`：对应 dataset 内 pose corrector 的 `mode`（见第 3 节）。
+   - `--v2xregpp-occ-from-lidar`：从 raw lidar 生成 occupancy（绕开超大的 `stage1_boxes.json` occ 字段）。
+   - `--v2xregpp-use-occ-hint / --v2xregpp-use-occ-pose / --v2xregpp-force-occ-pose`：控制 occ 的“hint/候选/强制”角色（第 3.2 节）。
+   - 新增：`--v2xregpp-min-precision`：绝对精度阈值（对应 `Stage1V2XRegPPPoseCorrector.min_precision`），用于减少“0 噪声时被错误 override”的情况。
+
 ### 2.3 本次 0–10m / 0–10deg 曲线的具体文件
 
 日志目录（示例）：  
@@ -147,6 +171,30 @@ EMA 的实现（对 `(dx,dy,yaw)`）：`stage1_v2xregpp.py:643`。
 > stable 的前提：样本顺序要保持、并且同一进程持有 state，所以 DataLoader workers 默认=0，
 > 见 `HEAL/opencood/tools/inference_w_noise.py:303`。
 
+补充（你提到的 `v2xregpp_init_pose`）：
+- 当前 `inference_w_noise.py` 里没有 `init_pose` 这个选项，只有 `initfree|stable`（`inference_w_noise.py:94`）。
+- 但“init_pose/有初值”这个概念在 V2X-Reg++ 的 late-fusion estimator 里存在：`HEAL/opencood/extrinsics/late_fusion/v2xregpp.py:10`，
+  也就是 **把当前 pose 当作 prior（T_hint/init）去 gate 匹配**。这种做法会让输出随 pose noise 改变，本质上不是“真正无初值”。
+
+### 3.3.1 EMA 平滑/步长限制到底在干什么（你问的“指数平滑”）
+
+EMA（指数滑动平均）的标量形式是：
+
+`y_t = (1-α) * y_{t-1} + α * x_t`，其中 `α∈(0,1]`。
+
+- `α` 越小：越“稳”（历史权重更大）；`α` 越大：越“跟手”（更信任当前估计）。
+- “指数”来自展开式：`y_t = α x_t + α(1-α) x_{t-1} + α(1-α)^2 x_{t-2} + ...`，旧样本权重按 `(1-α)^k` 指数衰减。
+
+在 `stage1_v2xregpp.py:643` 里，EMA 是对 `Δ(x,y,yaw)` 做的，其中 yaw 需要处理角度 wrap（`_delta_angle_deg`）。
+
+步长限制（`stage1_v2xregpp.py:663`）则是一个“异常值保护”：如果本帧估计的 `Δ` 相比上帧 `Δ` 跳变太大（超过 `max_step_xy_m / max_step_yaw_deg`），就认为可能是 outlier，直接沿用上一帧 `Δ`。
+
+### 3.3.2 我们对 initfree 做的关键修正（让它更像“真正无初值”）
+
+在 `HEAL/opencood/extrinsics/pose_correction/stage1_v2xregpp.py`：
+- **initfree 不再把 `T_current` 传入 `_estimate_rel_T`**，避免“apply 决策依赖当前 noisy pose”导致曲线随噪声起伏。
+- 新增 `min_precision`（对应 `--v2xregpp-min-precision`）作为绝对质量门控，减少“0 噪声时被低质量估计覆盖”的情况。
+
 ### 3.4 重要风险：stable 曲线“平”可能是退化（不是鲁棒）
 
 历史 sweep 中出现过“stable 曲线几乎完全平”，但 `rel_error_stats` 在噪声=0 时就巨大：
@@ -198,6 +246,13 @@ occ-hint 的输入是两张 2D BEV “图”（本实现默认是 occupancy map�
 - `resolution_y = extent_y / H`
 - `tx = -shift_col * resolution_x`
 - `ty = -shift_row * resolution_y`
+
+注意：如果 `resolution_x != resolution_y`（像素在物理空间是“长方形”），那么在像素网格上做 `rotate()` 枚举 yaw
+对应的是“带拉伸的旋转”，会破坏 yaw 估计的物理意义。对 DAIR 的默认 `bev_range`（x=204.8m, y=102.4m），
+若直接用 `grid_hw=256x256` 则 `resolution_x=0.8m/px`、`resolution_y=0.4m/px`。
+
+本 repo 已在 `stage1_v2xregpp.py:1124` 增加 `occ_preserve_aspect`：当 `occ_grid_hw` 给的是正方形时，会自动把 `W`
+调整到 `W/H = extent_x/extent_y`（DAIR 上等价于 `256x512`），从而保持“方形像素”。
 
 ---
 
@@ -384,3 +439,22 @@ HEAL 里一个典型例子是 PASTAT：
 4) **raw 对齐 vs feature 对齐：用 proj_first 做 A/B 对照**
    - 能快速定位鲁棒性瓶颈主要来自 D（离散化）、f（backbone 非等变）、还是 W（warp 插值/边界）。
 
+---
+
+## 9. 中融合配准（DAIR /data2）当前进度与主要问题
+
+**进度（已具备）**
+- HEAL 侧：`inference_w_noise.py` 已支持 `v2xregpp_initfree/stable`，并能对 `intermediate|late` 画 0–10m/0–10° 曲线（第 2 节）。
+- 配准侧：Stage1V2XRegPPPoseCorrector 已支持 box matching + occ-hint（FFT seed）+ occ_pose 候选 + ICP refine（第 3.2 节）。
+- 关键口径：`--noise-target non-ego` 已避免相对误差“叠加/双倍”（第 2.1 节）。
+
+**DAIR 上仍突出的问题（你现在会看到的瓶颈）**
+1) **occ-hint 歧义**：车路侧大基线/视野差异导致相关图多峰；如果 `force_occ_pose` 直接用 occ，可能把对齐打崩。
+2) **“无初值”仍随噪声波动**：根因往往是实现里仍有“依赖当前 noisy pose 的 gating/决策”（例如是否 apply），而不是 estimator 本身需要初值。
+3) **检测框稀疏/错检导致配准不稳**：box matching 在低重叠场景容易走向错误局部最优；需要 hint/refine/gating 来兜底。
+4) **分辨率/下采样带来的近似误差**：BEV 离散化 + `grid_sample` 插值导致“对齐/不对齐”对性能影响更敏感，尤其是 yaw。
+
+**下一步最有效的工程抓手（按优先级）**
+1) **把 initfree 的 apply 决策彻底与 `T_current` 解耦**（已在 `stage1_v2xregpp.py` 做了第一步，见第 3.3.2 节），并用绝对质量阈值（`min_precision/min_matches/min_stability`）替代“相对 current 的提升”。
+2) **为 occ-hint 加强置信 gating**：用 `occ_hint_min_peak_ratio / min_peak` 过滤歧义帧，必要时做 multi-hypothesis（top-K yaw/shift）再用 box precision 选优。
+3) **需要更准的平移时启用 ICP refine**：在 `occ` 或 `occ_refined` 给出较好 init 时，ICP 往往比纯 box SVD 更能补上平移精度（代价是耗时）。

@@ -181,8 +181,15 @@ def _bounded_iterator(iterator, start_idx: int, end_idx: Optional[int]):
         current += 1
 
 
-def maybe_refine_with_icp(T_init: np.ndarray, inf_pcd: o3d.geometry.PointCloud,
-                          veh_pcd: o3d.geometry.PointCloud) -> Tuple[np.ndarray, BeamDebug]:
+def maybe_refine_with_icp(
+    T_init: np.ndarray,
+    inf_pcd: o3d.geometry.PointCloud,
+    veh_pcd: o3d.geometry.PointCloud,
+    *,
+    inf_points: Optional[np.ndarray] = None,
+    veh_points: Optional[np.ndarray] = None,
+    seed_components: Optional[Tuple[object, ...]] = None,
+) -> Tuple[np.ndarray, BeamDebug]:
     refine_cfg = _cfg_value(cfg, 'post_refine', None)
     icp_cfg = _cfg_value(refine_cfg, 'icp', None)
     debug: BeamDebug = {}
@@ -192,6 +199,61 @@ def maybe_refine_with_icp(T_init: np.ndarray, inf_pcd: o3d.geometry.PointCloud,
     max_corr = float(_cfg_value(icp_cfg, 'max_correspondence_distance', 1.0))
     max_iter = int(_cfg_value(icp_cfg, 'max_iterations', 50))
     method = _cfg_value(icp_cfg, 'method', 'point_to_plane')
+
+    # Optional decoupling: run ICP refinement on a different (usually denser) voxel size
+    # than the feature registration stage.
+    refine_voxel = _cfg_value(icp_cfg, 'refine_voxel_size', None)
+    refine_source_voxel = _cfg_value(icp_cfg, 'refine_source_voxel_size', refine_voxel)
+    refine_target_voxel = _cfg_value(icp_cfg, 'refine_target_voxel_size', refine_voxel)
+    refine_max_points = _cfg_value(icp_cfg, 'refine_max_points', None)
+    refine_max_nn = int(_cfg_value(icp_cfg, 'refine_max_nn_normal', 30))
+
+    use_refine_cloud = (
+        (refine_source_voxel is not None or refine_target_voxel is not None)
+        and inf_points is not None
+        and veh_points is not None
+    )
+    if use_refine_cloud:
+        src_pcd = create_point_cloud(inf_points)
+        tgt_pcd = create_point_cloud(veh_points)
+        if refine_source_voxel is not None:
+            src_pcd = src_pcd.voxel_down_sample(voxel_size=float(refine_source_voxel))
+        if refine_target_voxel is not None:
+            tgt_pcd = tgt_pcd.voxel_down_sample(voxel_size=float(refine_target_voxel))
+        if refine_max_points is not None:
+            src_pcd = _maybe_subsample_pcd(
+                src_pcd,
+                int(refine_max_points),
+                seed_components=(*seed_components, "icp_src") if seed_components else ("icp_src",),
+            )
+            tgt_pcd = _maybe_subsample_pcd(
+                tgt_pcd,
+                int(refine_max_points),
+                seed_components=(*seed_components, "icp_tgt") if seed_components else ("icp_tgt",),
+            )
+        if method == 'point_to_plane':
+            # Provide normals for stable point-to-plane ICP. Use a radius tied to the voxel size.
+            base = None
+            if refine_source_voxel is not None:
+                base = float(refine_source_voxel)
+            if refine_target_voxel is not None:
+                base = float(refine_target_voxel) if base is None else min(base, float(refine_target_voxel))
+            if base is None:
+                base = 1.0
+            radius = float(_cfg_value(icp_cfg, 'refine_radius_normal', max(2.0 * base, 1.0)))
+            if not src_pcd.has_normals():
+                src_pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=refine_max_nn))
+            if not tgt_pcd.has_normals():
+                tgt_pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=refine_max_nn))
+
+        debug.update({
+            'icp_refine_source_voxel': float(refine_source_voxel) if refine_source_voxel is not None else None,
+            'icp_refine_target_voxel': float(refine_target_voxel) if refine_target_voxel is not None else None,
+            'icp_refine_source_points': int(len(src_pcd.points)),
+            'icp_refine_target_points': int(len(tgt_pcd.points)),
+        })
+        inf_pcd = src_pcd
+        veh_pcd = tgt_pcd
 
     # Open3D legacy ICP segfaults on some DAIR-V2X frames in this environment.
     # Use the tensor implementation which is stable and still CPU-fast enough.
@@ -203,14 +265,25 @@ def maybe_refine_with_icp(T_init: np.ndarray, inf_pcd: o3d.geometry.PointCloud,
         estimation = o3d.t.pipelines.registration.TransformationEstimationPointToPlane()
     else:
         estimation = o3d.t.pipelines.registration.TransformationEstimationPointToPoint()
-    icp_result = o3d.t.pipelines.registration.icp(
-        source=source_t,
-        target=target_t,
-        max_correspondence_distance=max_corr,
-        init_source_to_target=init_t,
-        estimation_method=estimation,
-        criteria=criteria,
-    )
+    try:
+        icp_result = o3d.t.pipelines.registration.icp(
+            source=source_t,
+            target=target_t,
+            max_correspondence_distance=max_corr,
+            init_source_to_target=init_t,
+            estimation_method=estimation,
+            criteria=criteria,
+        )
+    except Exception as exc:
+        # Open3D tensor ICP can fail on degenerate geometries (e.g., singular systems).
+        # Fall back to the initial estimate and keep the run going.
+        debug.update({
+            'icp_refined': False,
+            'icp_failed': True,
+            'icp_error': str(exc)[:300],
+        })
+        return T_init, debug
+
     T_refined = icp_result.transformation.numpy()
     debug.update({
         'icp_refined': True,
@@ -240,6 +313,69 @@ def create_point_cloud(points, color=[0, 0.651, 0.929]):
 
 def pcd2xyz(pcd):
     return np.asarray(pcd.points).T
+
+def _maybe_subsample_pcd(
+    pcd: o3d.geometry.PointCloud,
+    max_points: Optional[int],
+    *,
+    seed_components: Optional[Tuple[object, ...]] = None,
+) -> o3d.geometry.PointCloud:
+    """Optional deterministic random downsample to cap per-frame compute cost."""
+    if max_points is None:
+        return pcd
+    max_points = int(max_points)
+    if max_points <= 0:
+        return pcd
+    num_points = int(len(pcd.points))
+    if num_points <= max_points:
+        return pcd
+
+    tokens = [3407]
+    if seed_components:
+        tokens.extend(_stable_seed_token(x) for x in seed_components)
+    rng = np.random.default_rng(np.random.SeedSequence(tokens))
+    keep = rng.choice(num_points, size=max_points, replace=False)
+    return pcd.select_by_index(keep)
+
+def _maybe_subsample_feature_set(
+    xyz: np.ndarray,
+    feats: np.ndarray,
+    max_features: Optional[int],
+    *,
+    sampling: str = "random",
+    seed_components: Optional[Tuple[object, ...]] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Optional deterministic downsample for feature matching (keeps FPFH quality).
+
+    Unlike `max_points` (which reduces the point cloud *before* FPFH extraction and can
+    degrade descriptors by removing local neighbors), this function subsamples the
+    already-computed feature set. It primarily reduces KD-tree/query cost in the
+    correspondence stage while preserving descriptor quality.
+    """
+    if max_features is None:
+        return xyz, feats
+    max_features = int(max_features)
+    if max_features <= 0:
+        return xyz, feats
+    num = int(feats.shape[0])
+    if num <= max_features:
+        return xyz, feats
+    sampling = str(sampling or "random").strip().lower()
+    if sampling in {"topk_distinct", "topk_l2", "topk"}:
+        # Heuristic: keep the most "distinctive" descriptors within this cloud.
+        center = feats.mean(axis=0, keepdims=True)
+        scores = np.linalg.norm(feats - center, axis=1)
+        # Argpartition for O(N) selection, then stable sort for determinism.
+        keep = np.argpartition(scores, -max_features)[-max_features:]
+        keep = keep[np.argsort(scores[keep], kind="mergesort")]
+    else:
+        tokens = [3407]
+        if seed_components:
+            tokens.extend(_stable_seed_token(x) for x in seed_components)
+        rng = np.random.default_rng(np.random.SeedSequence(tokens))
+        keep = rng.choice(num, size=max_features, replace=False)
+        keep.sort()
+    return xyz[:, keep], feats[keep]
 
 def extract_fpfh(pcd, radius_normal, radius_feature):
     return extract_fpfh_with_max_nn(pcd, radius_normal, radius_feature, max_nn_normal=30, max_nn_feature=100)
@@ -273,12 +409,12 @@ def find_knn_cpu(feat0, feat1, knn=1, return_distance=False):
         return nn_inds
 
 def find_correspondences(feats0, feats1, mutual_filter=True):
-    nns01 = find_knn_cpu(feats0, feats1, knn=1, return_distance=False)
+    nns01, dists01 = find_knn_cpu(feats0, feats1, knn=1, return_distance=True)
     corres01_idx0 = np.arange(len(nns01))
     corres01_idx1 = nns01
 
     if not mutual_filter:
-        return corres01_idx0, corres01_idx1
+        return corres01_idx0, corres01_idx1, dists01
 
     nns10 = find_knn_cpu(feats1, feats0, knn=1, return_distance=False)
     corres10_idx1 = np.arange(len(nns10))
@@ -287,8 +423,9 @@ def find_correspondences(feats0, feats1, mutual_filter=True):
     mutual_filter = (corres10_idx0[corres01_idx1] == corres01_idx0)
     corres_idx0 = corres01_idx0[mutual_filter]
     corres_idx1 = corres01_idx1[mutual_filter]
+    corres_dists = dists01[mutual_filter]
 
-    return corres_idx0, corres_idx1
+    return corres_idx0, corres_idx1, corres_dists
 
 def Rt2T(R, t):
     T = np.identity(4)
@@ -335,22 +472,43 @@ def get_teaser_solver(noise_bound, rotation_estimation_algorithm=teaserpp_python
 
 def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
                 infra_params=None, veh_params=None, visualize=False, *, seed_components: Optional[Tuple[object, ...]] = None):
+    t_total_start = perf_counter()
     infra_points_raw = int(inf_pc.shape[0])
     veh_points_raw = int(veh_pc.shape[0])
 
+    t0 = perf_counter()
     inf_pc, beam_debug = apply_infra_beam_alignment(inf_pc, veh_pc, seed_components=seed_components)
+    t_beam = perf_counter() - t0
     infra_points_beam_aligned = int(inf_pc.shape[0])
 
+    t0 = perf_counter()
     inf_pcd = create_point_cloud(inf_pc, color=[0, 0.651, 0.929])
     veh_pcd = create_point_cloud(veh_pc, color=[1.000, 0.706, 0.000])
+    t_create_pcd = perf_counter() - t0
 
     infra_fpfh = infra_params or cfg.infra.fpfh
     veh_fpfh = veh_params or cfg.vehicle.fpfh
 
     inf_voxel = _cfg_value(infra_fpfh, 'voxel_size', cfg.infra.fpfh.voxel_size)
     veh_voxel = _cfg_value(veh_fpfh, 'voxel_size', cfg.vehicle.fpfh.voxel_size)
+    t0 = perf_counter()
     inf_pcd = inf_pcd.voxel_down_sample(voxel_size=inf_voxel)
     veh_pcd = veh_pcd.voxel_down_sample(voxel_size=veh_voxel)
+    t_voxel = perf_counter() - t0
+
+    infra_points_post_voxel = int(len(inf_pcd.points))
+    vehicle_points_post_voxel = int(len(veh_pcd.points))
+
+    # Optional cap on the number of points we compute features for.
+    infra_max_points = _cfg_value(infra_fpfh, 'max_points', None)
+    veh_max_points = _cfg_value(veh_fpfh, 'max_points', None)
+    t0 = perf_counter()
+    inf_pcd = _maybe_subsample_pcd(inf_pcd, infra_max_points, seed_components=(*seed_components, "infra") if seed_components else ("infra",))
+    veh_pcd = _maybe_subsample_pcd(veh_pcd, veh_max_points, seed_components=(*seed_components, "vehicle") if seed_components else ("vehicle",))
+    t_subsample = perf_counter() - t0
+
+    infra_points_post_sample = int(len(inf_pcd.points))
+    vehicle_points_post_sample = int(len(veh_pcd.points))
 
     A_xyz = pcd2xyz(inf_pcd)  # np array of size 3 by N
     B_xyz = pcd2xyz(veh_pcd)  # np array of size 3 by M
@@ -361,6 +519,7 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
     veh_max_nn_normal = _cfg_value(veh_fpfh, 'max_nn_normal', None)
     veh_max_nn_feature = _cfg_value(veh_fpfh, 'max_nn_feature', None)
 
+    t0 = perf_counter()
     A_feats = extract_fpfh_with_max_nn(
         inf_pcd,
         _cfg_value(infra_fpfh, 'radius_normal', cfg.infra.fpfh.radius_normal),
@@ -368,6 +527,9 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
         max_nn_normal=int(infra_max_nn_normal) if infra_max_nn_normal is not None else 30,
         max_nn_feature=int(infra_max_nn_feature) if infra_max_nn_feature is not None else 100,
     )
+    t_fpfh_infra = perf_counter() - t0
+
+    t0 = perf_counter()
     B_feats = extract_fpfh_with_max_nn(
         veh_pcd,
         _cfg_value(veh_fpfh, 'radius_normal', cfg.vehicle.fpfh.radius_normal),
@@ -375,10 +537,37 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
         max_nn_normal=int(veh_max_nn_normal) if veh_max_nn_normal is not None else 30,
         max_nn_feature=int(veh_max_nn_feature) if veh_max_nn_feature is not None else 100,
     )
+    t_fpfh_vehicle = perf_counter() - t0
+
+    # Optional cap on the number of features used in matching (after computing FPFH on
+    # the full voxelized cloud). This is usually a better speed/accuracy knob than
+    # `max_points`, because it keeps the neighborhood structure for FPFH intact.
+    infra_max_features = _cfg_value(infra_fpfh, 'max_features', None)
+    veh_max_features = _cfg_value(veh_fpfh, 'max_features', None)
+    infra_feat_sampling = _cfg_value(infra_fpfh, 'feature_sampling', 'random')
+    veh_feat_sampling = _cfg_value(veh_fpfh, 'feature_sampling', 'random')
+    t0 = perf_counter()
+    A_xyz, A_feats = _maybe_subsample_feature_set(
+        A_xyz,
+        A_feats,
+        infra_max_features,
+        sampling=infra_feat_sampling,
+        seed_components=(*seed_components, "infra_feat") if seed_components else ("infra_feat",),
+    )
+    B_xyz, B_feats = _maybe_subsample_feature_set(
+        B_xyz,
+        B_feats,
+        veh_max_features,
+        sampling=veh_feat_sampling,
+        seed_components=(*seed_components, "veh_feat") if seed_components else ("veh_feat",),
+    )
+    t_feature_sample = perf_counter() - t0
 
     # establish correspondences by nearest neighbour search in feature space
     mutual = bool(_cfg_value(_cfg_value(cfg, 'teaser', None), 'mutual_filter', True))
-    corrs_A, corrs_B = find_correspondences(A_feats, B_feats, mutual_filter=mutual)
+    t0 = perf_counter()
+    corrs_A, corrs_B, corr_dists = find_correspondences(A_feats, B_feats, mutual_filter=mutual)
+    t_match = perf_counter() - t0
     A_corr = A_xyz[:, corrs_A]  # np array of size 3 by num_corrs
     B_corr = B_xyz[:, corrs_B]  # np array of size 3 by num_corrs
 
@@ -388,11 +577,19 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
     if max_corrs is not None:
         max_corrs = int(max_corrs)
         if max_corrs > 0 and A_corr.shape[1] > max_corrs:
-            # Deterministic per-frame sampling.
-            rng = np.random.default_rng(np.random.SeedSequence([3407, *(_stable_seed_token(x) for x in (seed_components or ())) ]))
-            keep = rng.choice(A_corr.shape[1], size=max_corrs, replace=False)
+            # Deterministic per-frame sampling/selection.
+            sampling = str(_cfg_value(teaser_cfg, "correspondence_sampling", "random")).strip().lower()
+            if sampling in {"topk", "topk_distance", "distance"} and corr_dists is not None:
+                # Prefer the most confident matches (smallest feature distance).
+                keep = np.argsort(corr_dists)[:max_corrs]
+            else:
+                rng = np.random.default_rng(
+                    np.random.SeedSequence([3407, *(_stable_seed_token(x) for x in (seed_components or ())) ]))
+                keep = rng.choice(A_corr.shape[1], size=max_corrs, replace=False)
             A_corr = A_corr[:, keep]
             B_corr = B_corr[:, keep]
+            if corr_dists is not None:
+                corr_dists = corr_dists[keep]
 
     if cfg.rotation_estimation_algorithm == "GNC_TLS":
         rotation_estimation_algorithm = teaserpp_python.RobustRegistrationSolver.ROTATION_ESTIMATION_ALGORITHM.GNC_TLS
@@ -403,12 +600,14 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
 
     teaser_solver = get_teaser_solver(cfg.teaser.noise_bound, rotation_estimation_algorithm)
     suppress = bool(_cfg_value(_cfg_value(cfg, "teaser", None), "suppress_output", True))
+    t0 = perf_counter()
     with _suppress_native_stdout_stderr(suppress):
         teaser_solver.solve(A_corr, B_corr)
+    t_teaser_solve = perf_counter() - t0
     solution = teaser_solver.getSolution()
     R_teaser = solution.rotation
-    t_teaser = solution.translation
-    T_teaser = Rt2T(R_teaser, t_teaser)
+    t_solution = solution.translation
+    T_teaser = Rt2T(R_teaser, t_solution)
 
     if visualize:
         A_pcd_T_teaser = copy.deepcopy(inf_pcd).transform(T_teaser)
@@ -417,15 +616,37 @@ def fpfh_teaser(inf_pc: np.ndarray, veh_pc: np.ndarray,
     stats = {
         'infra_points_raw': infra_points_raw,
         'infra_points_beam_aligned': infra_points_beam_aligned,
-        'infra_points_post_voxel': int(len(inf_pcd.points)),
+        'infra_points_post_voxel': infra_points_post_voxel,
+        'infra_points_post_sample': infra_points_post_sample,
         'vehicle_points_raw': veh_points_raw,
-        'vehicle_points_post_voxel': int(len(veh_pcd.points)),
+        'vehicle_points_post_voxel': vehicle_points_post_voxel,
+        'vehicle_points_post_sample': vehicle_points_post_sample,
         'fpfh_mutual_filter': mutual,
         'fpfh_num_correspondences': int(A_corr.shape[1]),
+        't_beam': float(t_beam),
+        't_create_pcd': float(t_create_pcd),
+        't_voxel': float(t_voxel),
+        't_subsample': float(t_subsample),
+        't_fpfh_infra': float(t_fpfh_infra),
+        't_fpfh_vehicle': float(t_fpfh_vehicle),
+        't_feature_sample': float(t_feature_sample),
+        't_match': float(t_match),
+        't_teaser': float(t_teaser_solve),
     }
-    T_refined, icp_debug = maybe_refine_with_icp(T_teaser, inf_pcd, veh_pcd)
+    t0 = perf_counter()
+    T_refined, icp_debug = maybe_refine_with_icp(
+        T_teaser,
+        inf_pcd,
+        veh_pcd,
+        inf_points=inf_pc,
+        veh_points=veh_pc,
+        seed_components=seed_components,
+    )
+    t_icp = perf_counter() - t0
     stats.update(beam_debug)
     stats.update(icp_debug)
+    stats['t_icp'] = float(t_icp)
+    stats['t_total'] = float(perf_counter() - t_total_start)
 
     return T_refined, stats
 
@@ -546,6 +767,7 @@ if __name__ == '__main__':
         merged['radius_feature'] = _cfg_value(override, 'radius_feature', _cfg_value(default_block, 'radius_feature', None))
         merged['max_nn_normal'] = _cfg_value(override, 'max_nn_normal', _cfg_value(default_block, 'max_nn_normal', None))
         merged['max_nn_feature'] = _cfg_value(override, 'max_nn_feature', _cfg_value(default_block, 'max_nn_feature', None))
+        merged['max_points'] = _cfg_value(override, 'max_points', _cfg_value(default_block, 'max_points', None))
         return merged
 
     records = []
@@ -557,7 +779,9 @@ if __name__ == '__main__':
                 break
             candidates: List[Dict[str, Union[str, float, int, bool]]] = []
             best = None
-            best_score = -1.0
+            # Score can be negative (e.g., large ICP RMSE). Use -inf so we always
+            # pick at least one candidate and keep max-pairs semantics stable.
+            best_score = float("-inf")
             best_T = None
             t_start = perf_counter()
             for mode_cfg in mode_entries:

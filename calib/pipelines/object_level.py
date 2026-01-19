@@ -6,7 +6,7 @@ import numpy as np
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from calib.config import PipelineConfig, load_config
 from calib.data.dataset_manager import DatasetManager
@@ -20,6 +20,8 @@ from v2x_calib.utils import (
     convert_T_to_6DOF,
     get_RE_TE_by_compare_T_6DOF_result_true,
     implement_T_3dbox_object_list,
+    implement_T_points_n_3,
+    get_extrinsic_from_two_points,
 )
 
 
@@ -57,6 +59,81 @@ class ObjectLevelPipeline:
             return
         self._prior_T = convert_6DOF_to_T(T6)
 
+    def _refine_icp(self, T_init, infra_boxes, veh_boxes):
+        cfg = self.config.solver
+        max_iters = int(getattr(cfg, 'icp_refine_iters', 0) or 0)
+        if max_iters <= 0 or T_init is None:
+            return None
+        if not infra_boxes or not veh_boxes:
+            return None
+
+        def _centers(boxes):
+            centers = []
+            for box in boxes:
+                try:
+                    pts = np.asarray(box.get_bbox3d_8_3(), dtype=np.float32)
+                except Exception:
+                    continue
+                if pts.size == 0:
+                    continue
+                centers.append(pts.mean(axis=0))
+            if not centers:
+                return None
+            return np.stack(centers, axis=0)
+
+        pts_infra = _centers(infra_boxes)
+        pts_veh = _centers(veh_boxes)
+        if pts_infra is None or pts_veh is None:
+            return None
+
+        dist_thr = float(getattr(cfg, 'icp_distance_threshold_m', 0.0) or 0.0)
+        trim_ratio = float(getattr(cfg, 'icp_trim_ratio', 0.0) or 0.0)
+        min_matches = int(getattr(cfg, 'icp_min_matches', 0) or 0)
+        min_matches = max(1, min_matches)
+
+        T = T_init
+        for _ in range(max_iters):
+            try:
+                pts_trans = implement_T_points_n_3(T, pts_infra)
+            except Exception:
+                return None
+            if pts_trans.size == 0:
+                return None
+            diff = pts_trans[:, None, :] - pts_veh[None, :, :]
+            dists = np.linalg.norm(diff, axis=2)
+            nn_idx = np.argmin(dists, axis=1)
+            nn_dist = dists[np.arange(dists.shape[0]), nn_idx]
+            mask = np.isfinite(nn_dist)
+            if dist_thr > 0.0:
+                mask &= nn_dist <= dist_thr
+            if not np.any(mask):
+                break
+
+            sel = np.where(mask)[0]
+            order = np.argsort(nn_dist[sel])
+            if trim_ratio > 0.0 and trim_ratio < 1.0:
+                keep = int(max(min_matches, round(trim_ratio * sel.size)))
+            else:
+                keep = sel.size
+            keep = max(min_matches, min(keep, sel.size))
+            sel_keep = sel[order[:keep]]
+            if sel_keep.size < min_matches:
+                # Fall back to closest matches overall.
+                order_all = np.argsort(nn_dist)
+                sel_keep = order_all[: min(min_matches, order_all.size)]
+            if sel_keep.size == 0:
+                break
+
+            try:
+                T_new = get_extrinsic_from_two_points(pts_infra[sel_keep], pts_veh[nn_idx[sel_keep]])
+            except Exception:
+                break
+            if np.allclose(T_new, T):
+                T = T_new
+                break
+            T = T_new
+        return T
+
     def run(self) -> Dict[str, float]:
         output_dir = self._prepare_output_dir()
         frame_records: List[FrameMetrics] = []
@@ -76,6 +153,9 @@ class ObjectLevelPipeline:
             }
         else:
             topk_values = [int(self.config.filters.top_k)]
+            candidate_filters = {topk_values[0]: self.filters}
+        if not topk_values:
+            topk_values = [int(getattr(self.config.filters, 'top_k', 0) or 0)]
             candidate_filters = {topk_values[0]: self.filters}
         with matches_log.open('w', encoding='utf-8') as match_f:
             for sample in self.dataset.samples():
@@ -112,9 +192,12 @@ class ObjectLevelPipeline:
                 descriptor_seed_enabled = getattr(self.config.matching, 'descriptor_seed', False)
                 descriptor_matches = None
 
-                T_hint = None
+                hint_candidates = []
+                hint_source = None
+                self._last_occ_hint_peak = None
+                self._last_occ_hint_ratio = None
                 if use_prior and self._prior_T is not None:
-                    T_hint = self._prior_T
+                    hint_candidates.append({'source': 'prior', 'T': self._prior_T})
                 else:
                     if descriptor_seed_enabled:
                         desc_matches, _ = self.matching.descriptor_matches(infra_boxes, veh_boxes)
@@ -129,11 +212,11 @@ class ObjectLevelPipeline:
                             except Exception:
                                 descriptor_T = None
                         if descriptor_T is not None:
-                            T_hint = descriptor_T
-                    if T_hint is None and sensor_combo == 'lidar-lidar':
+                            hint_candidates.append({'source': 'descriptor', 'T': descriptor_T})
+                    if sensor_combo == 'lidar-lidar':
                         occ_T = self._estimate_occ_hint(sample)
                         if occ_T is not None:
-                            T_hint = occ_T
+                            hint_candidates.append({'source': 'occ', 'T': occ_T})
 
                 def _candidate_quality(T6, infra, veh):
                     if T6 is None:
@@ -179,26 +262,11 @@ class ObjectLevelPipeline:
                         T_eval=sample.T_true,
                         sensor_combo=sensor_combo,
                     )
-                    matches_aligned, stability_aligned = [], 0.0
-                    if T_hint is not None:
-                        try:
-                            aligned_infra = implement_T_3dbox_object_list(T_hint, filtered_infra)
-                        except Exception:
-                            aligned_infra = None
-                        if aligned_infra is not None:
-                            matches_aligned, stability_aligned = self.matching.compute(
-                                aligned_infra,
-                                filtered_vehicle,
-                                T_hint=None,
-                                T_eval=sample.T_true,
-                                sensor_combo=sensor_combo,
-                            )
                     match_time = time.perf_counter() - t_match_start
-                    total_match_time += match_time
 
                     solver_time = 0.0
 
-                    def _maybe_solve(source: str, matches, stability):
+                    def _maybe_solve(source: str, matches, stability, hint: Optional[str] = None):
                         nonlocal solver_time
                         if not matches:
                             return None
@@ -215,17 +283,126 @@ class ObjectLevelPipeline:
                             'RE': float(RE_cand),
                             'TE': float(TE_cand),
                             'quality': _candidate_quality(T6_cand, filtered_infra, filtered_vehicle),
+                            'hint_source': hint,
                         }
+
+                    def _add_icp_candidate(source: str, cand):
+                        if not cand:
+                            return
+                        if not bool(getattr(self.config.solver, 'icp_refine_on_solution', False)):
+                            return
+                        if cand.get('T6') is None:
+                            return
+                        icp_T = self._refine_icp(convert_6DOF_to_T(cand['T6']), filtered_infra, filtered_vehicle)
+                        if icp_T is None:
+                            return
+                        try:
+                            icp_T6 = convert_T_to_6DOF(icp_T)
+                            TE_compare = convert_T_to_6DOF(sample.T_true)
+                            RE_icp, TE_icp = get_RE_TE_by_compare_T_6DOF_result_true(icp_T6, TE_compare)
+                            candidates.append(
+                                {
+                                    'source': f'{source}_icp',
+                                    'matches': cand.get('matches', []),
+                                    'stability': float(cand.get('stability', 0.0)),
+                                    'T6': icp_T6,
+                                    'RE': float(RE_icp),
+                                    'TE': float(TE_icp),
+                                    'quality': _candidate_quality(icp_T6, filtered_infra, filtered_vehicle),
+                                }
+                            )
+                        except Exception:
+                            return
 
                     candidates = []
                     cand_base = _maybe_solve('late', matches_base, stability_base)
                     if cand_base is not None:
                         candidates.append(cand_base)
-                    cand_aligned = _maybe_solve('aligned', matches_aligned, stability_aligned)
-                    if cand_aligned is not None:
-                        candidates.append(cand_aligned)
+                        _add_icp_candidate('late', cand_base)
+                    for hint in hint_candidates:
+                        hint_T = hint['T']
+                        hint_label = str(hint.get('source') or 'hint')
+                        t_match_hint = time.perf_counter()
+                        hint_matches, stability_hint = self.matching.compute(
+                            filtered_infra,
+                            filtered_vehicle,
+                            T_hint=hint_T,
+                            T_eval=sample.T_true,
+                            sensor_combo=sensor_combo,
+                        )
+                        match_time += time.perf_counter() - t_match_hint
+                        cand_hint = _maybe_solve('hint', hint_matches, stability_hint, hint=hint_label)
+                        if cand_hint is not None:
+                            candidates.append(cand_hint)
+                            _add_icp_candidate('hint', cand_hint)
+                        try:
+                            aligned_infra = implement_T_3dbox_object_list(hint_T, filtered_infra)
+                        except Exception:
+                            aligned_infra = None
+                        if aligned_infra is not None:
+                            t_match_aligned = time.perf_counter()
+                            matches_aligned, stability_aligned = self.matching.compute(
+                                aligned_infra,
+                                filtered_vehicle,
+                                T_hint=None,
+                                T_eval=sample.T_true,
+                                sensor_combo=sensor_combo,
+                            )
+                            match_time += time.perf_counter() - t_match_aligned
+                            cand_aligned = _maybe_solve('aligned', matches_aligned, stability_aligned, hint=hint_label)
+                            if cand_aligned is not None:
+                                candidates.append(cand_aligned)
+                                _add_icp_candidate('aligned', cand_aligned)
+                        if (
+                            hint_label == 'occ'
+                            and bool(getattr(self.config.matching, 'occ_hint_raw_candidate', False))
+                        ):
+                            try:
+                                raw_T6 = convert_T_to_6DOF(hint_T)
+                                TE_compare = convert_T_to_6DOF(sample.T_true)
+                                RE_raw, TE_raw = get_RE_TE_by_compare_T_6DOF_result_true(raw_T6, TE_compare)
+                                candidates.append(
+                                    {
+                                        'source': 'occ_raw',
+                                        'matches': [],
+                                        'stability': float(stability_hint),
+                                        'T6': raw_T6,
+                                        'RE': float(RE_raw),
+                                        'TE': float(TE_raw),
+                                        'quality': _candidate_quality(raw_T6, filtered_infra, filtered_vehicle),
+                                        'hint_source': hint_label,
+                                    }
+                                )
+                            except Exception:
+                                pass
+                        icp_T = self._refine_icp(hint_T, filtered_infra, filtered_vehicle)
+                        if icp_T is not None:
+                            try:
+                                icp_T6 = convert_T_to_6DOF(icp_T)
+                                TE_compare = convert_T_to_6DOF(sample.T_true)
+                                RE_icp, TE_icp = get_RE_TE_by_compare_T_6DOF_result_true(icp_T6, TE_compare)
+                                candidates.append(
+                                    {
+                                        'source': 'icp',
+                                        'matches': [],
+                                        'stability': float(stability_hint),
+                                        'T6': icp_T6,
+                                        'RE': float(RE_icp),
+                                        'TE': float(TE_icp),
+                                        'quality': _candidate_quality(icp_T6, filtered_infra, filtered_vehicle),
+                                        'hint_source': hint_label,
+                                    }
+                                )
+                            except Exception:
+                                pass
 
-                    if use_prior and getattr(self.config.solver, 'consider_prior_candidate', False) and self._prior_T is not None:
+                    total_match_time += match_time
+
+                    if (
+                        use_prior
+                        and getattr(self.config.solver, 'consider_prior_candidate', False)
+                        and self._prior_T is not None
+                    ):
                         try:
                             prior_T6 = convert_T_to_6DOF(self._prior_T)
                             TE_compare = convert_T_to_6DOF(sample.T_true)
@@ -259,16 +436,32 @@ class ObjectLevelPipeline:
                         return False
 
                     best_candidate = None
-                    for cand in candidates:
-                        if _better(cand, best_candidate):
-                            best_candidate = cand
+                    occ_ratio = getattr(self, '_last_occ_hint_ratio', None)
+                    force_ratio = float(
+                        getattr(self.config.matching, 'occ_hint_raw_force_ratio', 0.0) or 0.0
+                    )
+                    if force_ratio > 0.0 and occ_ratio is not None:
+                        try:
+                            if float(occ_ratio) >= force_ratio:
+                                for cand in candidates:
+                                    if cand.get('source') == 'occ_raw':
+                                        best_candidate = cand
+                                        break
+                        except Exception:
+                            pass
+                    if best_candidate is None:
+                        for cand in candidates:
+                            if _better(cand, best_candidate):
+                                best_candidate = cand
 
                     fallback_used = False
                     matching_source = 'late'
+                    hint_source = None
                     matches_with_score = matches_base
                     stability = float(stability_base)
                     if best_candidate is not None:
                         matching_source = str(best_candidate['source'])
+                        hint_source = best_candidate.get('hint_source')
                         matches_with_score = best_candidate['matches']
                         stability = float(best_candidate['stability'])
                         T6 = best_candidate['T6']
@@ -304,6 +497,7 @@ class ObjectLevelPipeline:
                         'fallback_used': fallback_used,
                         'quality': quality,
                         'matching_source': matching_source,
+                        'hint_source': hint_source,
                     }
                     if best is None:
                         best = record
@@ -317,6 +511,23 @@ class ObjectLevelPipeline:
                         elif record['quality'][1] == best['quality'][1] and record['stability'] > best['stability']:
                             best = record
 
+                if best is None:
+                    best = {
+                        'top_k': int(getattr(self.config.filters, 'top_k', 0) or 0),
+                        'filtered_infra': [],
+                        'filtered_vehicle': [],
+                        'matches_with_score': [],
+                        'stability': 0.0,
+                        'T6': None,
+                        'RE': 180.0,
+                        'TE': float('inf'),
+                        'filter_time': 0.0,
+                        'match_time': 0.0,
+                        'solver_time': 0.0,
+                        'fallback_used': False,
+                        'quality': (float('-inf'), 0),
+                        'matching_source': 'none',
+                    }
                 assert best is not None
                 filtered_infra = best['filtered_infra']
                 filtered_vehicle = best['filtered_vehicle']
@@ -330,6 +541,7 @@ class ObjectLevelPipeline:
                 solver_time = best['solver_time']
                 fallback_used = best['fallback_used']
                 matching_source = best.get('matching_source', 'late')
+                hint_source = best.get('hint_source')
                 chosen_top_k = best['top_k']
                 elapsed = time.perf_counter() - start
                 frame_records.append(
@@ -381,6 +593,9 @@ class ObjectLevelPipeline:
                     'fallback_used': fallback_used,
                     'descriptor_seed_used': bool(descriptor_T is not None),
                     'descriptor_seed_matches': int(len(descriptor_matches or [])),
+                    'hint_source': hint_source,
+                    'occ_hint_peak': getattr(self, '_last_occ_hint_peak', None),
+                    'occ_hint_ratio': getattr(self, '_last_occ_hint_ratio', None),
                 }
                 match_f.write(json.dumps(json_record) + '\n')
         summary = aggregate_metrics_with_gate(

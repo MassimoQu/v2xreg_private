@@ -99,6 +99,8 @@ class FilterPipeline:
         priority = self._priority_map.get(cat, len(self._priority_map))
         volume = get_volume_from_bbox3d_8_3(box.get_bbox3d_8_3())
         confidence = box.get_confidence()
+        if getattr(self.config, 'confidence_first_for_detected', False) and cat == 'detected':
+            return (priority, -confidence, -volume)
         return (priority, -volume, -confidence)
 
     def _apply_per_category_limits(self, boxes):
