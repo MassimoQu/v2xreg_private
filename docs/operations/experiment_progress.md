@@ -119,6 +119,29 @@
 **备注**  
 - Camera 行使用 `data/DAIR-V2X/cooperative/test_data_info.json`（1789 帧），与 Top-3000 并非同一集合，指标仅用于路线内比较。
 
+### 4.2 2026-01-19 descriptor hint 融合验证（负向）
+
+| 实验 | `success@1m` | `success@2m` | `success@3m` | 备注 |
+| --- | --- | --- | --- | --- |
+| Detection + BEV desc + occ hint + descriptor seed | 0.1977 | 0.3763 | 0.4487 | `outputs/dair_v2xregpp_detection_desc_v2cache_full_r15_descseed/metrics.json` / `configs/pipeline_detection_desc_v2cache_full_r15_descseed.yaml` |
+| LiDAR BEV desc hint smoke（200 帧） | 0.420 | 0.475 | 0.545 | `outputs/dair_v2xregpp_pp25_bevdesc_tuned_hint_smoke/metrics.json` |
+| LiDAR BEV desc smoke（200 帧） | 0.585 | 0.675 | 0.755 | `outputs/dair_v2xregpp_pp25_bevdesc_tuned_smoke/metrics.json` |
+| Camera desc hint smoke（200 帧） | 0.195 | 0.345 | 0.445 | `outputs/camera_desc_test_3m_hint_smoke/metrics.json` |
+| Camera desc smoke（200 帧） | 0.205 | 0.395 | 0.495 | `outputs/camera_desc_test_3m_smoke/metrics.json` |
+
+**结论**  
+- descriptor seed + hint 匹配在现有特征下整体退化（全量 + smoke 均弱于原配置），保留现有最佳配置，不继续扩展该路线。
+
+### 4.3 2026-01-19 匹配权重微调（Top-3000 / smoke）
+
+| 实验 | `success@1m` | `success@2m` | `success@3m` | 备注 |
+| --- | --- | --- | --- | --- |
+| Detection + BEV desc + occ hint ratio=1.5（baseline） | 0.2353 | 0.4473 | 0.5367 | `outputs/full_det_desc_v2cache_r15/metrics.json` |
+| Detection + BEV desc + occ hint ratio=1.5（weighted） | 0.2220 | 0.4497 | 0.5463 | `outputs/dair_v2xregpp_detection_desc_v2cache_full_r15_weighted/metrics.json` |
+
+**结论**  
+- 加入 confidence/size 权重后 2m/3m 略升但 1m 明显下降，综合仍保留 baseline 版本；LiDAR/Camera 的 weighted smoke 也未显著提升，故未扩展到全量。
+
 ## 5. ICP / PICP（LiDAR-Registration-Benchmark）
 
 | Run | 样本数 | `success_rate` | `avg_runtime_s` | 备注 |
