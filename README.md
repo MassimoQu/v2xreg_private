@@ -37,16 +37,23 @@ This visualization (`static/visuals/merged_output.mp4`) compares the bounding bo
 * A new multi-end target association method is proposed, which fully explores spatial associations in the scene without positioning priors;
 * We distinguish two variants in this repo: **V2I-Calib** (oIoU-based association, original IROS2024 method) and **V2X-Reg++** (distance-based association, previously referred to as V2I-Calib++ in earlier drafts); both oDist remain available for real-time extrinsic monitoring.
 
-## Project Status & Roadmap
+## Internal Status & Summary
 
-The public tree currently focuses on the refactored **object-level (detection-box) calibration stack**. We are actively rebuilding the repository so it can plug into modern cooperative-perception frameworks (e.g., HEAL) and expose feature-level / learning-based registration utilities. The following items are on our near-term roadmap:
+This is the private working tree for paper reproduction + extensions. Use the docs under `docs/operations/` as the source of truth; this section is a concise snapshot.
 
-- [ ] Integrate the solver with mainstream collaborative perception pipelines to consume intermediate BEV features, not just final detection boxes.
-- [ ] Introduce temporal reasoning (sliding-window correspondences + motion-aware filtering) to improve stability in low-overlap scenes.
-- [ ] Learn richer correspondence cues by leveraging non-box features (occupancy peaks, keypoints, descriptors) exported from deep models.
-- [ ] Generalize the current “post-fusion” formulation into a mid-fusion friendly variant trained end-to-end for camera/LiDAR combinations.
+- **Table III (paper3737) reproduction:** live report in `docs/operations/table3_paper3737_repro_status.md` (jsonl re-scored, no fragment mixing). PP/SC detection best currently exceed paper under `te_re` (PP15 26.57/57.27/72.60, SC15 26.41/58.92/73.78). HKUST baselines still below paper (best success@1/2/3 ≈ 21–23 / 35–38 / 42–46). ICP/PICP full 3k×noise runs remain pending (only 100-frame smoke runs completed).
+- **Descriptor / detection extensions:** camera descriptors (pixel/HOG/ResNet/DINOv2) and BEV descriptors are tracked in `docs/operations/experiment_progress.md`. Current best Top-3000 camera smoke hits ~0.54/0.655/0.73; descriptor hint/seed and weighted variants did not improve the full runs.
+- **HEAL integration & pose correction:** stable pose correction sweeps and V2V4Real multi-ego notes live in `docs/operations/heal_pose_alignment_*`. Late vs mid fusion AP curves are nearly identical; stable corrections have not produced meaningful AP gains yet.
+- **Speed/engineering:** vectorized matching + IoU fast paths reduce runtime to <0.1s/frame on Top-3000; `seed_top_k` for GT∞ preserves accuracy while cutting runtime to ~52 ms/frame.
+- **Known gaps / next:** HKUST baselines still misaligned with paper time/accuracy, ICP/PICP full runs are outstanding, detection test split is still running, and GPU-dependent BEV feature dumps are blocked.
 
-These features are under active development and will be released once the interfaces stabilize. Contributions or early feedback are welcome via issues/PRs.
+## Major Additions in This Private Tree
+
+- Paper-aligned 3737-pair reproduction pipeline: `data/data_info_dair_paper3737.json`, `configs/pipeline_paper3737_*.yaml`, `tools/generate_table3_paper3737_repro_report.py`.
+- Table III triage & sweep helpers: `tools/sweep_*_table3.py`, `tools/measure_table3_time.py`, `docs/operations/ppsc_paper3737_repro_20260111.md`.
+- HEAL integration & pose alignment: `HEAL/` submodule updates + `docs/operations/heal_pose_alignment_*`.
+- Descriptor and feature experiments: `configs/pipeline_camera_desc_*.yaml`, `configs/pipeline_detection_desc_*.yaml`, `docs/operations/v2xregpp_midfusion_occ_hint.md`.
+- Dataset adaptation notes and non-invasive split handling: `docs/operations/dataset_adaptation_non_invasive.md`, `tools/build_*_data_info.py`.
 
 ## News
 
