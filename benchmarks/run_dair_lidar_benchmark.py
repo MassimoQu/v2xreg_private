@@ -144,7 +144,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Evaluate LiDAR-Registration-Benchmark methods on DAIR-V2X data.")
     parser.add_argument('--project-config', type=str,
-                        default='configs/hkust_lidar_global_config.yaml',
+                        default='configs/hkust/hkust_lidar_global_config.yaml',
                         help='Path to the project config that includes DAIR-V2X paths.')
     parser.add_argument('--data-info', type=str, default=None,
                         help='Optional data_info.json override (recommended for paper subsets).')

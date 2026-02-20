@@ -681,7 +681,7 @@ def ensure_output_dir(tag: str) -> Path:
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='./configs/hkust_lidar_global_config.yaml')
+    parser.add_argument('--config', type=str, default='./configs/hkust/hkust_lidar_global_config.yaml')
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=-1)
     parser.add_argument('--max-pairs', type=int, default=None)
