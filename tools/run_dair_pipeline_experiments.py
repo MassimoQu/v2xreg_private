@@ -187,7 +187,7 @@ def apply_overrides(cfg, overrides: Dict[str, object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Run DAIR-V2X pipeline experiments sequentially.')
-    parser.add_argument('--config', default='configs/pipeline.yaml', help='Base pipeline config path.')
+    parser.add_argument('--config', default='configs/dair/pipeline.yaml', help='Base pipeline config path.')
     parser.add_argument(
         '--tag-prefix',
         default='',

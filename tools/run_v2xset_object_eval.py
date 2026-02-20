@@ -95,7 +95,7 @@ def run_experiment(cfg_path: str, args) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Run object-level calibration on V2X-Set.")
-    parser.add_argument("--config", type=str, default="configs/pipeline.yaml")
+    parser.add_argument("--config", type=str, default="configs/dair/pipeline.yaml")
     parser.add_argument("--root", type=str, default="/mnt/ssd_gw/cooperative-vehicle-infrastructure/v2xset")
     parser.add_argument("--split", type=str, default="validate")
     parser.add_argument("--frame-stride", type=int, default=10)

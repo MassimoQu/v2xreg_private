@@ -76,7 +76,7 @@ def build_matcher(cfg, core_components=None, strategy=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate V2X-Set indicator curves and ablation data.")
-    parser.add_argument("--config", type=str, default="configs/pipeline.yaml")
+    parser.add_argument("--config", type=str, default="configs/dair/pipeline.yaml")
     parser.add_argument("--root", type=str, default="/mnt/ssd_gw/cooperative-vehicle-infrastructure/v2xset")
     parser.add_argument("--split", type=str, default="validate")
     parser.add_argument("--frame-stride", type=int, default=40)

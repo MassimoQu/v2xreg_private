@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--config",
         type=str,
-        default="configs/hkust_lidar_global_paper3737_table3_ratio0p5.yaml",
+        default="configs/paper3737/hkust/hkust_lidar_global_paper3737_table3_ratio0p5.yaml",
         help="HKUST benchmark YAML config.",
     )
     p.add_argument(

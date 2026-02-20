@@ -90,7 +90,11 @@ def _stats(values: Sequence[float]) -> Dict[str, float]:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config", default="configs/pipeline_paper_dair3737.yaml", help="Pipeline config YAML.")
+    p.add_argument(
+        "--config",
+        default="configs/paper3737/dair/pipeline_paper_dair3737_gt.yaml",
+        help="Pipeline config YAML.",
+    )
     p.add_argument("--max-samples", type=int, default=None, help="Optional cap on number of frames.")
     p.add_argument("--center-threshold", type=float, default=1.0, help="Max center distance for paired boxes.")
     p.add_argument(
@@ -199,4 +203,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

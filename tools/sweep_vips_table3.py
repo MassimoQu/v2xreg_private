@@ -184,7 +184,7 @@ def main() -> None:
                     sys.executable,
                     str(REPO_ROOT / "benchmarks" / "run_vips_benchmark.py"),
                     "--config",
-                    "configs/pipeline_paper3737_gt15_seedrefine5.yaml",
+                    "configs/paper3737/dair/pipeline_paper3737_gt15_seedrefine5.yaml",
                     "--start",
                     str(start),
                     "--max-pairs",

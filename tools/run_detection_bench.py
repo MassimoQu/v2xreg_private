@@ -30,7 +30,7 @@ def run_pipeline(cfg: PipelineConfig) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description='Run detection benchmarks for all cached files')
-    parser.add_argument('--config', default='configs/pipeline_detection.yaml')
+    parser.add_argument('--config', default='configs/dair/detection/pipeline_detection.yaml')
     parser.add_argument('--det-root', default='data/DAIR-V2X/detected')
     parser.add_argument('--max-files', type=int, default=None)
     args = parser.parse_args()

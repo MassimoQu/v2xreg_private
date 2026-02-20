@@ -15,7 +15,7 @@ from calib.pipelines.object_level import run_from_file
 
 def main():
     parser = argparse.ArgumentParser(description='Run V2X calibration pipeline')
-    parser.add_argument('--config', type=str, default='configs/pipeline.yaml')
+    parser.add_argument('--config', type=str, default='configs/dair/pipeline.yaml')
     parser.add_argument('--print', action='store_true', help='Print summary to stdout')
     args = parser.parse_args()
     summary = run_from_file(args.config)

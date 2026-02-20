@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -215,12 +216,17 @@ def _run_v2xregpp(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--stage1_json",
-        type=str,
-        default="/home/qqxluca/_tmp_freealign_repo/_baidu/logs_extracted/coalign_precalc/opv2v/test/stage1_boxes.json",
+    repo_root = Path(__file__).resolve().parents[1]
+    default_stage1 = os.environ.get(
+        "OPV2V_STAGE1",
+        str(repo_root / "data/OPV2V/detected/opv2v_lidar_v2xvit_stage1/test/stage1_boxes.json"),
     )
+    default_freealign_repo = os.environ.get("FREEALIGN_REPO", "")
+    default_heal_root = os.environ.get("HEAL_ROOT", str(repo_root / "HEAL"))
+    default_v2xreg_root = os.environ.get("V2XREG_ROOT", str(repo_root))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stage1_json", type=str, default=default_stage1)
     parser.add_argument("--method", type=str, choices=["baseline", "freealign", "v2xregpp"], required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--pos_std", type=float, default=3.0)
@@ -229,7 +235,7 @@ def main() -> int:
     parser.add_argument("--max_samples", type=int, default=0, help="0 means all")
     parser.add_argument("--thresholds", type=str, default="1,2,3")
 
-    parser.add_argument("--freealign_repo", type=str, default="/home/qqxluca/_tmp_freealign_repo")
+    parser.add_argument("--freealign_repo", type=str, default=default_freealign_repo)
     parser.add_argument("--fa_use_uncertainty", action="store_true", default=True)
     parser.add_argument("--fa_landmark_se2", action="store_true", default=True)
     parser.add_argument("--fa_adaptive_landmark", action="store_true", default=False)
@@ -247,9 +253,9 @@ def main() -> int:
         help="Use a no-initial-pose setting (all zeros, yaw=1deg) as the algorithm input.",
     )
 
-    parser.add_argument("--heal_root", type=str, default="/home/qqxluca/v2xreg_private/HEAL")
-    parser.add_argument("--v2xreg_root", type=str, default="/home/qqxluca/v2xreg_private")
-    parser.add_argument("--v2xregpp_config", type=str, default="configs/pipeline.yaml")
+    parser.add_argument("--heal_root", type=str, default=default_heal_root)
+    parser.add_argument("--v2xreg_root", type=str, default=default_v2xreg_root)
+    parser.add_argument("--v2xregpp_config", type=str, default="configs/dair/pipeline.yaml")
     parser.add_argument("--v2xregpp_mode", type=str, default="initfree", choices=["initfree", "stable"])
     parser.add_argument("--v2xregpp_min_matches", type=int, default=3)
     parser.add_argument("--v2xregpp_min_stability", type=float, default=0.0)
@@ -260,6 +266,11 @@ def main() -> int:
     args = parser.parse_args()
 
     stage1_path = Path(args.stage1_json).expanduser().resolve()
+    if not stage1_path.exists():
+        raise FileNotFoundError(
+            f"Stage1 cache not found: {stage1_path}. "
+            "Set --stage1_json or OPV2V_STAGE1 to a valid stage1_boxes.json."
+        )
     stage1 = _load_stage1(stage1_path)
 
     indices = _sorted_indices(stage1)
@@ -281,16 +292,22 @@ def main() -> int:
     pairs_eligible = 0
     pairs_updated = 0
 
-    freealign_repo = Path(args.freealign_repo).resolve()
-    heal_root = Path(args.heal_root).resolve()
-    v2xreg_root = Path(args.v2xreg_root).resolve()
+    freealign_repo = Path(args.freealign_repo).expanduser().resolve() if args.freealign_repo else None
+    heal_root = Path(args.heal_root).expanduser().resolve()
+    v2xreg_root = Path(args.v2xreg_root).expanduser().resolve()
     v2xregpp_config = Path(args.v2xregpp_config)
     if not v2xregpp_config.is_absolute():
         v2xregpp_config = (v2xreg_root / v2xregpp_config).resolve()
 
     if args.method == "freealign":
+        if freealign_repo is None or not freealign_repo.exists():
+            raise FileNotFoundError(
+                "FreeAlign repo not found. Set --freealign_repo or FREEALIGN_REPO."
+            )
         sys.path.insert(0, str(freealign_repo))
     elif args.method == "v2xregpp":
+        if not heal_root.exists():
+            raise FileNotFoundError("HEAL repo not found. Set --heal_root or HEAL_ROOT.")
         sys.path.insert(0, str(heal_root))
 
     try:

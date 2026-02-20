@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--project-config",
         type=str,
-        default="configs/hkust_lidar_global_paper3737.yaml",
+        default="configs/paper3737/hkust/hkust_lidar_global_paper3737.yaml",
         help="Project config that defines DAIR paths; values can be overridden via --data-root/--data-info.",
     )
     p.add_argument("--beam-align-infra", action="store_true", help="Enable infra beam alignment before ICP.")
