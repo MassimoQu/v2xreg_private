@@ -1,0 +1,82 @@
+data:
+  dataset: DAIR-V2X
+  split: test
+  data_info_path: data/DAIR-V2X/cooperative/test_data_info.json
+  data_root: data/DAIR-V2X/cooperative-vehicle-infrastructure
+  sensor_frame: camera
+  use_detection: false
+  use_image_descriptors: true
+  image_descriptor:
+    method: resnet
+    model: resnet18
+    model_input_size: 224
+    device: cuda
+    patch_size:
+    - 64
+    - 64
+    grayscale: false
+    min_area: 64.0
+    max_boxes: 16
+    priority_categories:
+    - bus
+    - truck
+    - car
+    cache_dir: outputs/image_descriptor_cache
+    cache_read: true
+    cache_write: true
+  noise:
+    pos_std: 0
+    rot_std: 0
+  max_samples: 1789
+filters:
+  top_k: 16
+  top_k_candidates:
+  - 14
+  - 16
+  distance_m: 120
+  priority_categories:
+  - bus
+  - truck
+  - car
+  min_confidence: 0.0
+matching:
+  strategy:
+  - descriptor_only
+  core_components:
+  - centerpoint_distance
+  - vertex_distance
+  filter_strategy: thresholdRetained
+  filter_threshold: 4
+  matches2extrinsic: weightedSVD
+  svd_strategy: svd_with_match
+  distance_thresholds:
+    truck: 2.0
+    van: 2.0
+    bus: 2.0
+    car: 1.5
+    pedestrian: 0.5
+    cyclist: 0.5
+    motorcyclist: 0.5
+    tricylist: 0.5
+    detected: 1.5
+  descriptor_weight: 3.0
+  descriptor_metric: cosine
+  descriptor_min_similarity: 0.0
+  descriptor_max_pairs: 64
+  descriptor_seed: true
+  parallel_flag: false
+  corresponding_parallel: false
+solver:
+  stability_gate: 0
+  max_iterations: 3
+  inlier_threshold_m: 2.0
+  min_inliers: 3
+evaluation:
+  success_thresholds:
+  - 1.0
+  - 2.0
+  - 3.0
+  time_verbose: false
+output:
+  root_dir: outputs
+  tag: camera_desc_resnet18_desc_only_sim0p0
