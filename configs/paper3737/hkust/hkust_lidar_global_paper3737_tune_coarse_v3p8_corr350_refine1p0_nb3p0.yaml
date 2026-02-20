@@ -1,0 +1,56 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Tuning: slightly less coarse FPFH.
+
+infra:
+  fpfh:
+    voxel_size: 3.8
+    radius_normal: 7.6
+    radius_feature: 15.2
+    max_nn_normal: 20
+    max_nn_feature: 80
+    max_features: 850
+
+vehicle:
+  fpfh:
+    voxel_size: 3.8
+    radius_normal: 7.6
+    radius_feature: 15.2
+    max_nn_normal: 20
+    max_nn_feature: 80
+    max_features: 850
+
+registration_modes:
+  - name: coarse
+    infra_fpfh:
+      voxel_size: 3.8
+      radius_normal: 7.6
+      radius_feature: 15.2
+      max_nn_normal: 20
+      max_nn_feature: 80
+      max_features: 850
+    vehicle_fpfh:
+      voxel_size: 3.8
+      radius_normal: 7.6
+      radius_feature: 15.2
+      max_nn_normal: 20
+      max_nn_feature: 80
+      max_features: 850
+
+post_refine:
+  icp:
+    enabled: true
+    max_correspondence_distance: 2.0
+    max_iterations: 60
+    method: point_to_plane
+    refine_voxel_size: 1.0
+    refine_max_points: 20000
+
+teaser:
+  noise_bound: 3.0
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 40
+  rotation_cost_threshold: 1.0e-05
+  max_correspondences: 350

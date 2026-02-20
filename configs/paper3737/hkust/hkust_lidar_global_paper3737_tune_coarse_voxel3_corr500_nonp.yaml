@@ -1,0 +1,51 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Tuning: coarse voxel, low correspondence cap, no ICP refinement.
+
+infra:
+  fpfh:
+    voxel_size: 3.0
+    radius_normal: 6.0
+    radius_feature: 12.0
+    max_nn_normal: 20
+    max_nn_feature: 80
+    max_features: 1000
+
+vehicle:
+  fpfh:
+    voxel_size: 3.0
+    radius_normal: 6.0
+    radius_feature: 12.0
+    max_nn_normal: 20
+    max_nn_feature: 80
+    max_features: 1000
+
+registration_modes:
+  - name: coarse
+    infra_fpfh:
+      voxel_size: 3.0
+      radius_normal: 6.0
+      radius_feature: 12.0
+      max_nn_normal: 20
+      max_nn_feature: 80
+      max_features: 1000
+    vehicle_fpfh:
+      voxel_size: 3.0
+      radius_normal: 6.0
+      radius_feature: 12.0
+      max_nn_normal: 20
+      max_nn_feature: 80
+      max_features: 1000
+
+post_refine:
+  icp:
+    enabled: false
+
+teaser:
+  noise_bound: 2.5
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 40
+  rotation_cost_threshold: 1.0e-05
+  max_correspondences: 500

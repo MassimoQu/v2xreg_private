@@ -1,0 +1,12 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Tuning: larger correspondence set to boost success (slower than corr=1500).
+
+teaser:
+  noise_bound: 2.5
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 60
+  rotation_cost_threshold: 1.0e-06
+  max_correspondences: 4000
