@@ -1,0 +1,56 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Budget ~0.1s: keep a finer voxel (2.0m) but cap the feature point count to
+# control FPFH+matching cost. Intended for the HKUST no-init baselines (FGR/Quatro/Teaser++).
+
+infra:
+  fpfh:
+    voxel_size: 2.0
+    radius_normal: 4.0
+    radius_feature: 8.0
+    max_nn_normal: 15
+    max_nn_feature: 50
+    max_points: 2000
+
+vehicle:
+  fpfh:
+    voxel_size: 2.0
+    radius_normal: 4.0
+    radius_feature: 8.0
+    max_nn_normal: 15
+    max_nn_feature: 50
+    max_points: 2000
+
+registration_modes:
+  - name: budget0p1
+    infra_fpfh:
+      voxel_size: 2.0
+      radius_normal: 4.0
+      radius_feature: 8.0
+      max_nn_normal: 15
+      max_nn_feature: 50
+      max_points: 2000
+    vehicle_fpfh:
+      voxel_size: 2.0
+      radius_normal: 4.0
+      radius_feature: 8.0
+      max_nn_normal: 15
+      max_nn_feature: 50
+      max_points: 2000
+
+post_refine:
+  icp:
+    enabled: true
+    max_correspondence_distance: 4.0
+    max_iterations: 10
+    method: point_to_point
+
+teaser:
+  noise_bound: 2.5
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 50
+  rotation_cost_threshold: 1.0e-06
+  max_correspondences: 1500
+

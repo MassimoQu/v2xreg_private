@@ -1,0 +1,51 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Aggressive runtime config aiming to probe the ~0.01-0.05s regime.
+# Expect significantly degraded accuracy; used to map the speed/accuracy frontier.
+
+infra:
+  fpfh:
+    voxel_size: 4.0
+    radius_normal: 8.0
+    radius_feature: 16.0
+    max_nn_normal: 8
+    max_nn_feature: 20
+
+vehicle:
+  fpfh:
+    voxel_size: 4.0
+    radius_normal: 8.0
+    radius_feature: 16.0
+    max_nn_normal: 8
+    max_nn_feature: 20
+
+registration_modes:
+  - name: ultra_fast
+    infra_fpfh:
+      voxel_size: 4.0
+      radius_normal: 8.0
+      radius_feature: 16.0
+      max_nn_normal: 8
+      max_nn_feature: 20
+    vehicle_fpfh:
+      voxel_size: 4.0
+      radius_normal: 8.0
+      radius_feature: 16.0
+      max_nn_normal: 8
+      max_nn_feature: 20
+
+post_refine:
+  icp:
+    enabled: true
+    max_correspondence_distance: 7.0
+    max_iterations: 5
+    method: point_to_point
+
+teaser:
+  noise_bound: 4.0
+  mutual_filter: false
+  inlier_selection_mode: KCORE_HEU
+  rotation_max_iterations: 20
+  rotation_cost_threshold: 1.0e-05
+  max_correspondences: 150
+

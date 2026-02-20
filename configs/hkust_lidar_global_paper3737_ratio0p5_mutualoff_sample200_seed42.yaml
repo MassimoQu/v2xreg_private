@@ -1,5 +1,0 @@
-_BASE_CONFIG_: configs/hkust_lidar_global_paper3737_ratio0p5_mutualoff.yaml
-
-data:
-  data_info_path: ./data/data_info_dair_paper3737_sample200_seed42.json
-
