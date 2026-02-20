@@ -1,7 +1,10 @@
 import os.path as osp
 import os
 import numpy as np
-import open3d as o3d
+try:
+    import open3d as o3d
+except Exception:
+    o3d = None
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -81,6 +84,8 @@ class Reader():
             points = np.fromfile(path_pointcloud, dtype=np.float32).reshape(-1, 4)
             return points[:, :3]
         elif path_pointcloud.endswith('.pcd'):
+            if o3d is None:
+                raise ImportError("open3d is required to read .pcd point clouds")
             pointpillar = o3d.io.read_point_cloud(path_pointcloud)
             # NOTE: np.asarray(pointpillar.points) may return a zero-copy view into
             # Open3D-owned memory. If the PointCloud is released, downstream users

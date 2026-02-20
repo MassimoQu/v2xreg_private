@@ -103,6 +103,11 @@ class SolverConfig:
     icp_trim_ratio: float = 0.0
     icp_min_matches: int = 0
     icp_refine_on_solution: bool = False
+    ransac_iterations: int = 0
+    ransac_threshold_m: float = 0.0
+    ransac_min_inliers: int = 0
+    ransac_min_samples: int = 3
+    ransac_seed: int = 0
 
 
 @dataclass

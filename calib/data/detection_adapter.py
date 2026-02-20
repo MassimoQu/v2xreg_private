@@ -38,12 +38,14 @@ class DetectionAdapter:
         corners = entry
         box7d = None
         descriptor = None
+        bbox2d = None
         if isinstance(entry, dict):
             corners = entry.get('corners') or entry.get('points') or entry.get('bbox')
             bbox_type = entry.get('type', default_type)
             confidence = entry.get('score', entry.get('confidence', confidence))
             descriptor = entry.get('descriptor')
             box7d = entry.get('box7d') or entry.get('box3d') or entry.get('pred_box3d')
+            bbox2d = entry.get('bbox2d') or entry.get('bbox2d_4') or entry.get('bbox_2d')
             if descriptor is not None:
                 descriptor = np.asarray(descriptor, dtype=np.float32)
         if corners is None and box7d is not None:
@@ -56,7 +58,21 @@ class DetectionAdapter:
             lwh = arr[3:6]
             yaw = float(arr[6])
             arr = np.asarray(get_bbox3d_8_3_from_xyz_lwh_yaw(xyz, lwh, yaw), dtype=np.float32)
-        return BBox3d(bbox_type, arr, confidence=confidence, descriptor=descriptor)
+        bbox2d_arr = None
+        if bbox2d is not None:
+            try:
+                bbox2d_arr = [float(v) for v in bbox2d[:4]]
+            except Exception:
+                bbox2d_arr = None
+        if bbox2d_arr is None:
+            return BBox3d(bbox_type, arr, confidence=confidence, descriptor=descriptor)
+        return BBox3d(
+            bbox_type,
+            arr,
+            bbox_4=bbox2d_arr,
+            confidence=confidence,
+            descriptor=descriptor,
+        )
 
     def _record_can_validate_ids(self, record: Optional[Dict[str, Any]]) -> bool:
         if not isinstance(record, dict):

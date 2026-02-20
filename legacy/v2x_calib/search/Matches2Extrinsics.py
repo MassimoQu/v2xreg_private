@@ -1,6 +1,10 @@
 import sys
 from pathlib import Path
 import numpy as np
+try:
+    import torch
+except Exception:  # pragma: no cover - torch optional
+    torch = None
 sys.path.append(str(Path(__file__).parent.parent))
 from ..utils import (
     get_extrinsic_from_two_3dbox_object,
@@ -11,6 +15,21 @@ from ..utils import (
     implement_T_points_n_3,
     convert_T_to_6DOF,
 )  # , optimize_extrinsic_from_two_mixed_3dbox_object_list
+
+
+def _normalize_torch_device(device):
+    if torch is None or device is None:
+        return None
+    if isinstance(device, str):
+        try:
+            dev = torch.device(device)
+        except Exception:
+            return None
+    else:
+        dev = device
+    if dev.type == "cuda" and not torch.cuda.is_available():
+        return None
+    return dev
 
 class Matches2Extrinsics:
     
@@ -28,6 +47,7 @@ class Matches2Extrinsics:
         inlier_threshold_m: float = 0.0,
         mad_scale: float = 2.5,
         min_inliers: int = 1,
+        device=None,
     ):
         
         self.matches_score_list = matches_score_list or []
@@ -39,6 +59,9 @@ class Matches2Extrinsics:
         self.inlier_threshold_m = float(inlier_threshold_m or 0.0)
         self.mad_scale = float(mad_scale or 0.0)
         self.min_inliers = max(1, int(min_inliers or 1))
+        self.device = device
+        self._torch_device = _normalize_torch_device(device)
+        self._use_torch = torch is not None and self._torch_device is not None and self._torch_device.type == "cuda"
         self.threshold = (
             max(self.matches_score_list[0][1] * 0.8, self.matches_score_list[0][1] - 1)
             if len(self.matches_score_list) >= 1
@@ -107,9 +130,83 @@ class Matches2Extrinsics:
                 best_res = res
         return best, best_res
 
+    def _torch_estimate_T_points(self, points1, points2, weights, *, svd_without_match: bool):
+        dev = self._torch_device
+        if dev is None:
+            return None
+        pts1 = torch.as_tensor(points1, device=dev, dtype=torch.float64).reshape(-1, 3)
+        pts2 = torch.as_tensor(points2, device=dev, dtype=torch.float64).reshape(-1, 3)
+        if pts1.numel() == 0 or pts2.numel() == 0:
+            return np.eye(4)
+        if pts1.shape[0] != pts2.shape[0]:
+            n = min(int(pts1.shape[0]), int(pts2.shape[0]))
+            if n <= 0:
+                return np.eye(4)
+            pts1 = pts1[:n]
+            pts2 = pts2[:n]
+            if weights is not None:
+                weights = list(weights)[:n]
+        weight_vec = None
+        if weights is not None:
+            weight_vec = torch.as_tensor(weights, device=dev, dtype=pts1.dtype).reshape(-1)
+            if weight_vec.numel() != pts1.shape[0]:
+                weight_vec = None
+
+        if weight_vec is None:
+            centroid1 = pts1.mean(dim=0)
+            centroid2 = pts2.mean(dim=0)
+            A = pts1 - centroid1
+            B = pts2 - centroid2
+        else:
+            wsum = torch.clamp(weight_vec.sum(), min=1e-9)
+            centroid1 = (pts1 * weight_vec[:, None]).sum(dim=0) / wsum
+            centroid2 = (pts2 * weight_vec[:, None]).sum(dim=0) / wsum
+            scale = torch.sqrt(weight_vec).unsqueeze(1)
+            A = (pts1 - centroid1) * scale
+            B = (pts2 - centroid2) * scale
+
+        if svd_without_match:
+            U1, _, _ = torch.linalg.svd(A.T, full_matrices=False)
+            U2, _, _ = torch.linalg.svd(B.T, full_matrices=False)
+            R = U2 @ U1.T
+        else:
+            H = A.T @ B
+            U, _, Vh = torch.linalg.svd(H, full_matrices=False)
+            R = Vh.transpose(0, 1) @ U.transpose(0, 1)
+        if torch.det(R) < 0:
+            if svd_without_match:
+                U2[:, 2] *= -1
+                R = U2 @ U1.T
+            else:
+                Vh[-1, :] *= -1
+                R = Vh.transpose(0, 1) @ U.transpose(0, 1)
+        t = centroid2 - R @ centroid1
+        T = torch.eye(4, device=dev, dtype=pts1.dtype)
+        T[:3, :3] = R
+        T[:3, 3] = t
+        return T.detach().cpu().numpy()
+
+    def _torch_estimate_T(self, corners1_list, corners2_list, weights, *, svd_without_match: bool):
+        pts1 = np.concatenate(corners1_list, axis=0)
+        pts2 = np.concatenate(corners2_list, axis=0)
+        if svd_without_match:
+            return self._torch_estimate_T_points(pts1, pts2, weights, svd_without_match=True)
+        if weights is not None:
+            w = np.repeat(np.asarray(weights, dtype=np.float64), 8)
+        else:
+            w = None
+        return self._torch_estimate_T_points(pts1, pts2, w, svd_without_match=False)
+
     def _estimate_T(self, corners1_list, corners2_list, weights, strategy: str):
         if not corners1_list or not corners2_list:
             return np.eye(4)
+        if self._use_torch:
+            return self._torch_estimate_T(
+                corners1_list,
+                corners2_list,
+                weights if strategy == 'weightedSVD' else None,
+                svd_without_match=self.svd_strategy == 'svd_without_match',
+            )
         pts1 = np.concatenate(corners1_list, axis=0)
         pts2 = np.concatenate(corners2_list, axis=0)
         if self.svd_strategy == 'svd_without_match':
@@ -129,6 +226,13 @@ class Matches2Extrinsics:
         pts2 = np.asarray(points2, dtype=np.float64).reshape(-1, 3)
         if pts1.size == 0 or pts2.size == 0:
             return np.eye(4)
+        if self._use_torch:
+            return self._torch_estimate_T_points(
+                pts1,
+                pts2,
+                weights if strategy == 'weightedSVD' else None,
+                svd_without_match=self.svd_strategy == 'svd_without_match',
+            )
         if pts1.shape != pts2.shape:
             n = min(int(pts1.shape[0]), int(pts2.shape[0]))
             if n <= 0:

@@ -5,14 +5,62 @@ from typing import List, Tuple
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+try:
+    import cupy as cp  # type: ignore
+    from cupyx.scipy.optimize import linear_sum_assignment as cupy_linear_sum_assignment  # type: ignore
+except Exception:  # pragma: no cover - cupy optional
+    cp = None
+    cupy_linear_sum_assignment = None
+
+try:
+    import torch
+except Exception:  # pragma: no cover - torch optional
+    torch = None
+
 from calib.config import MatchingConfig
 from v2x_calib.corresponding import BoxesMatch, CorrespondingDetector
 from v2x_calib.utils import implement_T_3dbox_object_list
 
 
 class MatchingEngine:
-    def __init__(self, config: MatchingConfig) -> None:
+    def __init__(self, config: MatchingConfig, device=None) -> None:
         self.config = config
+        self.device = device
+        self._torch_device = self._normalize_device(device)
+        self._use_torch = torch is not None and self._torch_device is not None and self._torch_device.type == 'cuda'
+
+    @staticmethod
+    def _normalize_device(device):
+        if torch is None or device is None:
+            return None
+        if isinstance(device, str):
+            try:
+                dev = torch.device(device)
+            except Exception:
+                return None
+        else:
+            dev = device
+        if dev.type == 'cuda' and not torch.cuda.is_available():
+            return None
+        return dev
+
+    @staticmethod
+    def _device_is_cuda(device) -> bool:
+        if device is None:
+            return False
+        if isinstance(device, str):
+            return device.startswith("cuda")
+        return getattr(device, "type", None) == "cuda"
+
+    @staticmethod
+    def _linear_sum_assignment(cost, *, maximize: bool = False, device=None):
+        if cp is not None and cupy_linear_sum_assignment is not None and MatchingEngine._device_is_cuda(device):
+            cost_cp = cp.asarray(cost)
+            if maximize:
+                cost_cp = -cost_cp
+            row_ind, col_ind = cupy_linear_sum_assignment(cost_cp)
+            return row_ind.get(), col_ind.get()
+        return linear_sum_assignment(cost, maximize=maximize)
 
     def _hint_core_component(self) -> str:
         raw = getattr(self.config, 'hint_core_component', None)
@@ -36,6 +84,7 @@ class MatchingEngine:
             distance_threshold=self.config.distance_thresholds,
             parallel=self.config.corresponding_parallel,
             resolve_180_ambiguity=getattr(self.config, 'resolve_180_ambiguity', False),
+            device=self._torch_device,
         )
         return list(detector.get_matches())
 
@@ -92,27 +141,47 @@ class MatchingEngine:
             veh_vertices = np.stack(
                 [np.asarray(box.get_bbox3d_8_3(), dtype=np.float32) for box in veh_boxes], axis=0
             )
-            infra_centers = infra_vertices.mean(axis=1)
-            veh_centers = veh_vertices.mean(axis=1)
-            center_dist = np.linalg.norm(
-                infra_centers[:, None, :] - veh_centers[None, :, :], axis=2
-            ).astype(np.float32, copy=False)
 
-            if hint_component == 'vertex_distance':
-                infra_flat = infra_vertices.reshape(num_infra, -1)
-                veh_flat = veh_vertices.reshape(num_veh, -1)
-                dist = (
-                    np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
-                ).astype(np.float32, copy=False)
-            elif hint_component == 'overall_distance':
-                infra_flat = infra_vertices.reshape(num_infra, -1)
-                veh_flat = veh_vertices.reshape(num_veh, -1)
-                vertex_dist = (
-                    np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
-                ).astype(np.float32, copy=False)
-                dist = ((center_dist + vertex_dist) / 2.0).astype(np.float32, copy=False)
+            if self._use_torch:
+                dev = self._torch_device
+                infra_vertices_t = torch.as_tensor(infra_vertices, device=dev)
+                veh_vertices_t = torch.as_tensor(veh_vertices, device=dev)
+                infra_centers = infra_vertices_t.mean(dim=1)
+                veh_centers = veh_vertices_t.mean(dim=1)
+                center_dist = torch.cdist(infra_centers, veh_centers, p=2).detach().cpu().numpy()
+                if hint_component == 'vertex_distance':
+                    infra_flat = infra_vertices_t.reshape(num_infra, -1)
+                    veh_flat = veh_vertices_t.reshape(num_veh, -1)
+                    dist = torch.cdist(infra_flat, veh_flat, p=2).div_(8.0).detach().cpu().numpy()
+                elif hint_component == 'overall_distance':
+                    infra_flat = infra_vertices_t.reshape(num_infra, -1)
+                    veh_flat = veh_vertices_t.reshape(num_veh, -1)
+                    vertex_dist = torch.cdist(infra_flat, veh_flat, p=2).div_(8.0).detach().cpu().numpy()
+                    dist = ((center_dist + vertex_dist) / 2.0).astype(np.float32, copy=False)
+                else:
+                    dist = center_dist.astype(np.float32, copy=False)
             else:
-                dist = center_dist
+                infra_centers = infra_vertices.mean(axis=1)
+                veh_centers = veh_vertices.mean(axis=1)
+                center_dist = np.linalg.norm(
+                    infra_centers[:, None, :] - veh_centers[None, :, :], axis=2
+                ).astype(np.float32, copy=False)
+
+                if hint_component == 'vertex_distance':
+                    infra_flat = infra_vertices.reshape(num_infra, -1)
+                    veh_flat = veh_vertices.reshape(num_veh, -1)
+                    dist = (
+                        np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
+                    ).astype(np.float32, copy=False)
+                elif hint_component == 'overall_distance':
+                    infra_flat = infra_vertices.reshape(num_infra, -1)
+                    veh_flat = veh_vertices.reshape(num_veh, -1)
+                    vertex_dist = (
+                        np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
+                    ).astype(np.float32, copy=False)
+                    dist = ((center_dist + vertex_dist) / 2.0).astype(np.float32, copy=False)
+                else:
+                    dist = center_dist
 
             box_types = [
                 str(box.get_bbox_type()).lower() if hasattr(box, 'get_bbox_type') else 'detected'
@@ -123,7 +192,7 @@ class MatchingEngine:
             large_cost = 1e6
             cost = dist.astype(np.float32, copy=True)
             cost[~allowed] = large_cost
-            row_ind, col_ind = linear_sum_assignment(cost)
+            row_ind, col_ind = self._linear_sum_assignment(cost, device=self._torch_device)
             for r, c in zip(row_ind.tolist(), col_ind.tolist()):
                 if r >= num_infra or c >= num_veh:
                     continue
@@ -149,6 +218,7 @@ class MatchingEngine:
                 distance_threshold=self.config.distance_thresholds,
                 parallel=self.config.corresponding_parallel,
                 resolve_180_ambiguity=getattr(self.config, 'resolve_180_ambiguity', False),
+                device=self._torch_device,
             )
             score_dict = detector.get_matches_with_score()
             if not score_dict:
@@ -229,22 +299,40 @@ class MatchingEngine:
             infra_mat = np.stack([desc_infra[i][:dim].astype(np.float32, copy=False) for i in infra_idx])
             veh_mat = np.stack([desc_vehicle[j][:dim].astype(np.float32, copy=False) for j in veh_idx])
 
-            if metric in {'l2', 'euclidean'}:
-                a2 = np.sum(infra_mat * infra_mat, axis=1, keepdims=True)
-                b2 = np.sum(veh_mat * veh_mat, axis=1, keepdims=True).T
-                dist2 = np.maximum(a2 + b2 - 2.0 * (infra_mat @ veh_mat.T), 0.0)
-                dist = np.sqrt(dist2, dtype=np.float32)
-                sim_matrix = np.exp(-dist)
-                cost_matrix = dist
+            if self._use_torch:
+                dev = self._torch_device
+                infra_t = torch.as_tensor(infra_mat, device=dev)
+                veh_t = torch.as_tensor(veh_mat, device=dev)
+                if metric in {'l2', 'euclidean'}:
+                    dist = torch.cdist(infra_t, veh_t, p=2)
+                    sim_matrix = torch.exp(-dist)
+                    cost_matrix = dist
+                else:
+                    infra_norm = torch.linalg.norm(infra_t, dim=1, keepdim=True)
+                    veh_norm = torch.linalg.norm(veh_t, dim=1, keepdim=True)
+                    infra_mat_n = infra_t / torch.clamp(infra_norm, min=1e-6)
+                    veh_mat_n = veh_t / torch.clamp(veh_norm, min=1e-6)
+                    sim_matrix = infra_mat_n @ veh_mat_n.t()
+                    cost_matrix = 1.0 - sim_matrix
+                sim_matrix = sim_matrix.detach().cpu().numpy()
+                cost_matrix = cost_matrix.detach().cpu().numpy()
             else:
-                infra_norm = np.linalg.norm(infra_mat, axis=1, keepdims=True)
-                veh_norm = np.linalg.norm(veh_mat, axis=1, keepdims=True)
-                infra_mat_n = infra_mat / np.maximum(infra_norm, 1e-6)
-                veh_mat_n = veh_mat / np.maximum(veh_norm, 1e-6)
-                sim_matrix = infra_mat_n @ veh_mat_n.T
-                cost_matrix = 1.0 - sim_matrix
+                if metric in {'l2', 'euclidean'}:
+                    a2 = np.sum(infra_mat * infra_mat, axis=1, keepdims=True)
+                    b2 = np.sum(veh_mat * veh_mat, axis=1, keepdims=True).T
+                    dist2 = np.maximum(a2 + b2 - 2.0 * (infra_mat @ veh_mat.T), 0.0)
+                    dist = np.sqrt(dist2, dtype=np.float32)
+                    sim_matrix = np.exp(-dist)
+                    cost_matrix = dist
+                else:
+                    infra_norm = np.linalg.norm(infra_mat, axis=1, keepdims=True)
+                    veh_norm = np.linalg.norm(veh_mat, axis=1, keepdims=True)
+                    infra_mat_n = infra_mat / np.maximum(infra_norm, 1e-6)
+                    veh_mat_n = veh_mat / np.maximum(veh_norm, 1e-6)
+                    sim_matrix = infra_mat_n @ veh_mat_n.T
+                    cost_matrix = 1.0 - sim_matrix
 
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            row_ind, col_ind = self._linear_sum_assignment(cost_matrix, device=self._torch_device)
             for r, c in zip(row_ind.tolist(), col_ind.tolist()):
                 sim = float(sim_matrix[r, c])
                 if sim < min_sim:
@@ -315,6 +403,7 @@ class MatchingEngine:
             size_similarity_min=getattr(self.config, 'size_similarity_min', 0.0),
             confidence_boost_weight=getattr(self.config, 'confidence_boost_weight', 0.0),
             size_similarity_boost_weight=getattr(self.config, 'size_similarity_boost_weight', 0.0),
+            device=self._torch_device,
         )
         matches_score = matcher.get_matches_with_score()
         max_matches = getattr(self.config, 'max_retained_matches', None)

@@ -6,6 +6,13 @@ from scipy.optimize import linear_sum_assignment
 from . import similarity_utils
 import time
 
+try:
+    import cupy as cp  # type: ignore
+    from cupyx.scipy.optimize import linear_sum_assignment as cupy_linear_sum_assignment  # type: ignore
+except Exception:  # pragma: no cover - cupy optional
+    cp = None
+    cupy_linear_sum_assignment = None
+
 class BoxesMatch():
 
     def __init__(
@@ -32,6 +39,7 @@ class BoxesMatch():
         size_similarity_min: float = 0.0,
         confidence_boost_weight: float = 0.0,
         size_similarity_boost_weight: float = 0.0,
+        device=None,
     ):
         '''
         BoxesMatch is a class to obtain corresponding pairs between two sets of bounding boxes without any prior extrinsics.
@@ -63,6 +71,7 @@ class BoxesMatch():
         self.size_similarity_min = float(size_similarity_min or 0.0)
         self.confidence_boost_weight = float(confidence_boost_weight or 0.0)
         self.size_similarity_boost_weight = float(size_similarity_boost_weight or 0.0)
+        self.device = device
 
         self.result_matches = []
         self.total_matches = []
@@ -228,6 +237,7 @@ class BoxesMatch():
                         resolve_180_ambiguity=self.resolve_180_ambiguity,
                         infra_indices=infra_indices,
                         vehicle_indices=vehicle_indices,
+                        device=self.device,
                     )
                     if use_centerpoint and KP_center is not None:
                         if pair_weights is not None:
@@ -347,10 +357,25 @@ class BoxesMatch():
     #     return matches
     
     def get_matched_boxes_Hungarian_matching(self):
-        row_ind, col_ind = linear_sum_assignment(self.KP, maximize=True)
+        if cp is not None and cupy_linear_sum_assignment is not None and self._use_cupy():
+            cost = cp.asarray(self.KP)
+            row_ind, col_ind = cupy_linear_sum_assignment(-cost)
+            row_ind = row_ind.get()
+            col_ind = col_ind.get()
+        else:
+            row_ind, col_ind = linear_sum_assignment(self.KP, maximize=True)
         matches = list(zip(row_ind, col_ind))
         # matches = np.column_stack((row_ind, col_ind))
         return matches
+
+    def _use_cupy(self):
+        if cp is None or cupy_linear_sum_assignment is None:
+            return False
+        if self.device is None:
+            return False
+        if isinstance(self.device, str):
+            return self.device.startswith("cuda")
+        return getattr(self.device, "type", None) == "cuda"
 
     def filter_wrong_matches(self):
         if self.matches_filter_strategy == 'trueRetained':

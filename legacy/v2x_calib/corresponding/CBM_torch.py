@@ -10,12 +10,14 @@ from torch import Tensor
 class CBM():
     # All the transform are defined in right hand coordinates
 
-    def __init__(self, args=None):
+    def __init__(self, args=None, device=None):
         if args == None:
             self.args = self.parser()
         else:
             self.args = args
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        if device is None:
+            device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.device = torch.device(str(device))
 
     # def parser(self):
     #     parser = argparse.ArgumentParser()

@@ -10,6 +10,8 @@ from v2x_calib.utils import (
     convert_T_to_6DOF,
     get_RE_TE_by_compare_T_6DOF_result_true,
     get_xyz_from_bbox3d_8_3,
+    get_extrinsic_from_two_points,
+    implement_T_points_n_3,
 )
 
 
@@ -70,6 +72,24 @@ class ExtrinsicSolver:
                 weight = base * (prod ** conf_exp)
                 adjusted.append(((int(i), int(j)), float(weight)))
             matches_score = adjusted
+        ransac_iters = int(getattr(self.solver_cfg, 'ransac_iterations', 0) or 0)
+        ransac_thr = float(getattr(self.solver_cfg, 'ransac_threshold_m', 0.0) or 0.0)
+        if ransac_iters > 0 and ransac_thr > 0.0 and len(matches_score) >= 3:
+            ransac_min_inliers = int(getattr(self.solver_cfg, 'ransac_min_inliers', 0) or 0)
+            ransac_min_samples = int(getattr(self.solver_cfg, 'ransac_min_samples', 3) or 3)
+            ransac_seed = int(getattr(self.solver_cfg, 'ransac_seed', 0) or 0)
+            filtered = self._ransac_matches(
+                infra_boxes,
+                veh_boxes,
+                matches_score,
+                threshold_m=ransac_thr,
+                min_inliers=ransac_min_inliers,
+                min_samples=ransac_min_samples,
+                iterations=ransac_iters,
+                seed=ransac_seed,
+            )
+            if filtered:
+                matches_score = filtered
         solver = Matches2Extrinsics(
             infra_boxes,
             veh_boxes,
@@ -145,6 +165,83 @@ class ExtrinsicSolver:
             return matches_score
         filtered = [matches_score[idx] for idx in range(n) if best_mask[idx]]
         if len(filtered) < min_support:
+            return matches_score
+        return filtered
+
+    @staticmethod
+    def _ransac_matches(
+        infra_boxes,
+        veh_boxes,
+        matches_score,
+        *,
+        threshold_m: float,
+        min_inliers: int,
+        min_samples: int,
+        iterations: int,
+        seed: int,
+    ):
+        centers_infra = []
+        centers_veh = []
+        weights = []
+        for (i, j), score in matches_score:
+            try:
+                infra_box = infra_boxes[int(i)]
+                veh_box = veh_boxes[int(j)]
+                ci = get_xyz_from_bbox3d_8_3(infra_box.get_bbox3d_8_3())
+                cj = get_xyz_from_bbox3d_8_3(veh_box.get_bbox3d_8_3())
+            except Exception:
+                return matches_score
+            centers_infra.append(np.asarray(ci, dtype=np.float64))
+            centers_veh.append(np.asarray(cj, dtype=np.float64))
+            try:
+                weights.append(float(score))
+            except Exception:
+                weights.append(0.0)
+
+        n = len(centers_infra)
+        if n < max(2, min_samples):
+            return matches_score
+        if min_samples < 2:
+            min_samples = 2
+        if min_inliers <= 0:
+            min_inliers = min_samples
+        centers_infra = np.stack(centers_infra, axis=0)
+        centers_veh = np.stack(centers_veh, axis=0)
+        weights = np.asarray(weights, dtype=np.float64)
+        rng = np.random.default_rng(seed)
+
+        best_mask = None
+        best_support = -1
+        best_weight = float("-inf")
+        for _ in range(int(iterations)):
+            try:
+                sample_idx = rng.choice(n, size=min_samples, replace=False)
+            except ValueError:
+                break
+            try:
+                T = get_extrinsic_from_two_points(
+                    centers_infra[sample_idx], centers_veh[sample_idx]
+                )
+            except Exception:
+                continue
+            transformed = implement_T_points_n_3(T, centers_infra)
+            residuals = np.linalg.norm(transformed - centers_veh, axis=1)
+            mask = residuals <= float(threshold_m)
+            support = int(np.count_nonzero(mask))
+            if support <= 0:
+                continue
+            weight_sum = float(weights[mask].sum()) if weights.size == residuals.size else float(support)
+            if support > best_support or (support == best_support and weight_sum > best_weight):
+                best_support = support
+                best_weight = weight_sum
+                best_mask = mask
+                if best_support == n:
+                    break
+
+        if best_mask is None or best_support < min_inliers:
+            return matches_score
+        filtered = [matches_score[idx] for idx in range(n) if best_mask[idx]]
+        if len(filtered) < min_inliers:
             return matches_score
         return filtered
 

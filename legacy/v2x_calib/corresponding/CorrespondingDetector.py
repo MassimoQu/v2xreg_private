@@ -7,6 +7,11 @@ import numpy as np
 from sklearn.neighbors import KDTree
 from ..utils import cal_3dIoU, get_volume_from_bbox3d_8_3, get_xyz_from_bbox3d_8_3
 
+try:
+    import torch
+except Exception:  # pragma: no cover - torch optional
+    torch = None
+
 _VERTEX_FLIP_INDICES = np.array([2, 3, 0, 1, 6, 7, 4, 5], dtype=np.int64)
 _DIHEDRAL_4 = [
     (0, 1, 2, 3),
@@ -37,10 +42,21 @@ class CorrespondingDetector():
         distance_threshold=3,
         parallel=False,
         resolve_180_ambiguity: bool = False,
+        device=None,
     ):
         self.infra_bboxes_object_list = infra_bboxes_object_list
         self.vehicle_bboxes_object_list = vehicle_bboxes_object_list
         self.resolve_180_ambiguity = bool(resolve_180_ambiguity)
+        self._torch_device = None
+        self._use_torch = False
+        if torch is not None and device is not None:
+            try:
+                dev = torch.device(device) if isinstance(device, str) else device
+            except Exception:
+                dev = None
+            if dev is not None and dev.type == 'cuda' and torch.cuda.is_available():
+                self._torch_device = dev
+                self._use_torch = True
 
         self.corresponding_score_dict = {}
         self.Y = 0
@@ -97,29 +113,74 @@ class CorrespondingDetector():
             fallback_threshold = min(distance_threshold.values())
         else:
             fallback_threshold = -3.0
+        use_center = distance_strategy == 'centerpoint' or 'centerpoint' in distance_strategy
+        use_vertex = distance_strategy == 'vertexpoint' or 'vertexpoint' in distance_strategy
+        center_dist = None
+        vertex_dist = None
+        if self._use_torch and (use_center or use_vertex):
+            try:
+                infra_vertices = np.stack(
+                    [np.asarray(b.get_bbox3d_8_3(), dtype=np.float32) for b in self.infra_bboxes_object_list],
+                    axis=0,
+                )
+                veh_vertices = np.stack(
+                    [np.asarray(b.get_bbox3d_8_3(), dtype=np.float32) for b in self.vehicle_bboxes_object_list],
+                    axis=0,
+                )
+                dev = self._torch_device
+                infra_vertices_t = torch.as_tensor(infra_vertices, device=dev)
+                veh_vertices_t = torch.as_tensor(veh_vertices, device=dev)
+                if use_center:
+                    infra_centers = infra_vertices_t.mean(dim=1)
+                    veh_centers = veh_vertices_t.mean(dim=1)
+                    center_dist = torch.cdist(infra_centers, veh_centers, p=2).detach().cpu().numpy()
+                if use_vertex:
+                    infra_flat = infra_vertices_t.reshape(infra_vertices_t.shape[0], -1)
+                    veh_flat = veh_vertices_t.reshape(veh_vertices_t.shape[0], -1)
+                    dist = torch.cdist(infra_flat, veh_flat, p=2).div_(8.0)
+                    if self.resolve_180_ambiguity:
+                        for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
+                            perm_idx = torch.as_tensor(perm, device=dev)
+                            infra_perm = infra_vertices_t[:, perm_idx, :].reshape(infra_vertices_t.shape[0], -1)
+                            dist_perm = torch.cdist(infra_perm, veh_flat, p=2).div_(8.0)
+                            dist = torch.minimum(dist, dist_perm)
+                    vertex_dist = dist.detach().cpu().numpy()
+            except Exception:
+                center_dist = None
+                vertex_dist = None
+
         for i, infra_bbox_object in enumerate(self.infra_bboxes_object_list):
             for j, vehicle_bbox_object in enumerate(self.vehicle_bboxes_object_list):
                 update_flag = False
                 if infra_bbox_object.get_bbox_type() == vehicle_bbox_object.get_bbox_type():
                     distance = 0
-                    if distance_strategy == 'centerpoint' or 'centerpoint' in distance_strategy:
+                    if use_center:
                         infra_bbox_centerpoint = get_xyz_from_bbox3d_8_3(infra_bbox_object.get_bbox3d_8_3())
                         vehicle_bbox_centerpoint = get_xyz_from_bbox3d_8_3(vehicle_bbox_object.get_bbox3d_8_3())
-                        distance += -np.linalg.norm(infra_bbox_centerpoint - vehicle_bbox_centerpoint)
-                    if distance_strategy == 'vertexpoint' or 'vertexpoint' in distance_strategy:
+                        if center_dist is not None:
+                            distance += -float(center_dist[i, j])
+                        else:
+                            distance += -np.linalg.norm(infra_bbox_centerpoint - vehicle_bbox_centerpoint)
+                    if use_vertex:
                         infra_bbox_vertex = infra_bbox_object.get_bbox3d_8_3()
                         vehicle_bbox_vertex = vehicle_bbox_object.get_bbox3d_8_3()
                         if self.resolve_180_ambiguity:
-                            best = float(np.linalg.norm(infra_bbox_vertex - vehicle_bbox_vertex))
-                            for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
-                                cand = float(np.linalg.norm(infra_bbox_vertex[perm] - vehicle_bbox_vertex))
-                                if cand < best:
-                                    best = cand
-                            distance += -best / 8
+                            if vertex_dist is not None:
+                                distance += -float(vertex_dist[i, j])
+                            else:
+                                best = float(np.linalg.norm(infra_bbox_vertex - vehicle_bbox_vertex))
+                                for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
+                                    cand = float(np.linalg.norm(infra_bbox_vertex[perm] - vehicle_bbox_vertex))
+                                    if cand < best:
+                                        best = cand
+                                distance += -best / 8
                         else:
-                            distance += -np.linalg.norm(infra_bbox_vertex - vehicle_bbox_vertex) / 8
+                            if vertex_dist is not None:
+                                distance += -float(vertex_dist[i, j])
+                            else:
+                                distance += -np.linalg.norm(infra_bbox_vertex - vehicle_bbox_vertex) / 8
 
-                    if 'centerpoint' in distance_strategy and 'vertexpoint' in distance_strategy:
+                    if use_center and use_vertex:
                         distance /= 2
 
                     # print(f'{i} - {j} inf_type:{infra_bbox_object.get_bbox_type()} veh_type:{vehicle_bbox_object.get_bbox_type()} distance: {distance}')

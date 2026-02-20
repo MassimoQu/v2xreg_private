@@ -20,6 +20,18 @@ import functools # For functools.partial
 import atexit # To ensure pool cleanup on exit
 from scipy.optimize import linear_sum_assignment
 
+try:
+    import cupy as cp  # type: ignore
+    from cupyx.scipy.optimize import linear_sum_assignment as cupy_linear_sum_assignment  # type: ignore
+except Exception:  # pragma: no cover - cupy optional
+    cp = None
+    cupy_linear_sum_assignment = None
+
+try:
+    import torch
+except Exception:  # pragma: no cover - torch optional
+    torch = None
+
 _LARGE_COST = 1e6
 _VERTEX_FLIP_INDICES = np.array([2, 3, 0, 1, 6, 7, 4, 5], dtype=np.int64)
 _DIHEDRAL_4 = [
@@ -62,7 +74,51 @@ def _normalize_thresholds(distance_threshold):
     return normalized, float(fallback)
 
 
-def _solve_assignment(dist_matrix, threshold_row, type_match):
+def _resolve_torch_device(device):
+    if torch is None or device is None:
+        return None
+    if isinstance(device, str):
+        try:
+            dev = torch.device(device)
+        except Exception:
+            return None
+    else:
+        dev = device
+    if dev.type == 'cuda' and not torch.cuda.is_available():
+        return None
+    return dev
+
+
+def _solve_assignment(dist_matrix, threshold_row, type_match, device=None):
+    if torch is not None and isinstance(dist_matrix, torch.Tensor):
+        if dist_matrix.numel() == 0:
+            return 0
+        dev = dist_matrix.device
+        thr_t = torch.as_tensor(threshold_row, device=dev, dtype=dist_matrix.dtype)
+        type_match_t = torch.as_tensor(type_match, device=dev)
+        allowed = type_match_t & (dist_matrix <= thr_t[:, None])
+        if not bool(allowed.any().item()):
+            return 0
+        cost = dist_matrix.clone()
+        cost[~allowed] = _LARGE_COST
+        if cp is not None and cupy_linear_sum_assignment is not None and _use_cupy(device):
+            cost_cp = cp.fromDlpack(torch.utils.dlpack.to_dlpack(cost))
+            row_ind, col_ind = cupy_linear_sum_assignment(cost_cp)
+            row_ind = row_ind.get()
+            col_ind = col_ind.get()
+            if row_ind.size == 0:
+                return 0
+            idx = torch.as_tensor(row_ind, device=dev, dtype=torch.long)
+            jdx = torch.as_tensor(col_ind, device=dev, dtype=torch.long)
+            return int(allowed[idx, jdx].sum().item())
+        cost_np = cost.detach().cpu().numpy()
+        row_ind, col_ind = linear_sum_assignment(cost_np)
+        if row_ind.size == 0:
+            return 0
+        allowed_np = allowed.detach().cpu().numpy()
+        valid = allowed_np[row_ind, col_ind]
+        return int(np.count_nonzero(valid))
+
     if dist_matrix.size == 0:
         return 0
     allowed = type_match & (dist_matrix <= threshold_row[:, None])
@@ -70,19 +126,41 @@ def _solve_assignment(dist_matrix, threshold_row, type_match):
         return 0
     cost = dist_matrix.copy()
     cost[~allowed] = _LARGE_COST
-    row_ind, col_ind = linear_sum_assignment(cost)
+    if cp is not None and cupy_linear_sum_assignment is not None and _use_cupy(device):
+        cost_cp = cp.asarray(cost)
+        row_ind, col_ind = cupy_linear_sum_assignment(cost_cp)
+        row_ind = row_ind.get()
+        col_ind = col_ind.get()
+    else:
+        row_ind, col_ind = linear_sum_assignment(cost)
     if row_ind.size == 0:
         return 0
     valid = allowed[row_ind, col_ind]
     return int(np.count_nonzero(valid))
 
 
-def _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match):
+def _use_cupy(device) -> bool:
+    if cp is None or cupy_linear_sum_assignment is None:
+        return False
+    if device is None:
+        return False
+    if isinstance(device, str):
+        return device.startswith("cuda")
+    return getattr(device, "type", None) == "cuda"
+
+
+def _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match, *, device=None):
     if converted_vertices.size == 0 or vehicle_centers.size == 0:
         return 0
-    centers = converted_vertices.mean(axis=1)
-    dist = np.linalg.norm(centers[:, None, :] - vehicle_centers[None, :, :], axis=2)
-    return _solve_assignment(dist, threshold_row, type_match)
+    dev = _resolve_torch_device(device)
+    if dev is not None and dev.type == 'cuda':
+        centers_t = torch.as_tensor(converted_vertices, device=dev).mean(dim=1)
+        veh_t = torch.as_tensor(vehicle_centers, device=dev)
+        dist = torch.cdist(centers_t, veh_t, p=2)
+    else:
+        centers = converted_vertices.mean(axis=1)
+        dist = np.linalg.norm(centers[:, None, :] - vehicle_centers[None, :, :], axis=2)
+    return _solve_assignment(dist, threshold_row, type_match, device=device)
 
 
 def _count_matches_vertex(
@@ -92,20 +170,35 @@ def _count_matches_vertex(
     type_match,
     *,
     resolve_180_ambiguity: bool = False,
+    device=None,
 ):
     if converted_vertices.size == 0 or vehicle_vertices.size == 0:
         return 0
-    infra_flat = converted_vertices.reshape(converted_vertices.shape[0], -1)
-    veh_flat = vehicle_vertices.reshape(vehicle_vertices.shape[0], -1)
-    dist = np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
-    if resolve_180_ambiguity:
-        best = dist
-        for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
-            permuted = converted_vertices[:, perm, :].reshape(converted_vertices.shape[0], -1)
-            dist_perm = np.linalg.norm(permuted[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
-            best = np.minimum(best, dist_perm)
-        dist = best
-    return _solve_assignment(dist, threshold_row, type_match)
+    dev = _resolve_torch_device(device)
+    if dev is not None and dev.type == 'cuda':
+        infra_t = torch.as_tensor(converted_vertices, device=dev)
+        veh_t = torch.as_tensor(vehicle_vertices, device=dev)
+        infra_flat = infra_t.reshape(infra_t.shape[0], -1)
+        veh_flat = veh_t.reshape(veh_t.shape[0], -1)
+        dist = torch.cdist(infra_flat, veh_flat, p=2).div_(8.0)
+        if resolve_180_ambiguity:
+            for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
+                perm_idx = torch.as_tensor(perm, device=dev)
+                permuted = infra_t[:, perm_idx, :].reshape(infra_t.shape[0], -1)
+                dist_perm = torch.cdist(permuted, veh_flat, p=2).div_(8.0)
+                dist = torch.minimum(dist, dist_perm)
+    else:
+        infra_flat = converted_vertices.reshape(converted_vertices.shape[0], -1)
+        veh_flat = vehicle_vertices.reshape(vehicle_vertices.shape[0], -1)
+        dist = np.linalg.norm(infra_flat[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
+        if resolve_180_ambiguity:
+            best = dist
+            for perm in _VERTEX_DIHEDRAL_PERMS[1:]:
+                permuted = converted_vertices[:, perm, :].reshape(converted_vertices.shape[0], -1)
+                dist_perm = np.linalg.norm(permuted[:, None, :] - veh_flat[None, :, :], axis=2) / 8.0
+                best = np.minimum(best, dist_perm)
+            dist = best
+    return _solve_assignment(dist, threshold_row, type_match, device=device)
 
 
 def cal_core_KP_distance_fast_components(
@@ -120,6 +213,7 @@ def cal_core_KP_distance_fast_components(
     resolve_180_ambiguity: bool = False,
     infra_indices=None,
     vehicle_indices=None,
+    device=None,
 ):
     """
     Vectorized variant that evaluates both centerpoint/vertex distance components in one pass.
@@ -179,7 +273,9 @@ def cal_core_KP_distance_fast_components(
                 raise ValueError('svd_starategy should be svd_with_match or svd_without_match')
             converted_vertices = _transform_vertices(T)
             if use_centerpoint:
-                matches = _count_matches_center(converted_vertices, vehicle_centers, threshold_row, type_match)
+                matches = _count_matches_center(
+                    converted_vertices, vehicle_centers, threshold_row, type_match, device=device
+                )
                 KP_center[i, j] = max(matches - 1, 0)
                 max_matches_num = max(max_matches_num, matches)
             if use_vertex:
@@ -189,6 +285,7 @@ def cal_core_KP_distance_fast_components(
                     threshold_row,
                     type_match,
                     resolve_180_ambiguity=bool(resolve_180_ambiguity),
+                    device=device,
                 )
                 KP_vertex[i, j] = max(matches_vertex - 1, 0)
                 max_matches_num = max(max_matches_num, matches_vertex)
