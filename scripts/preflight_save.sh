@@ -55,7 +55,16 @@ if [[ -n "$tracked_pdfs" ]]; then
 fi
 
 bad_tracked_roots=()
-for p in outputs static/visuals exports data/DAIR-V2X data/OPV2V data/V2XSim2; do
+# NOTE: we keep a tiny DAIR-V2X sample under `data/DAIR-V2X/` for smoke tests.
+# The large full datasets / caches should never be tracked.
+for p in \
+  outputs \
+  static/visuals \
+  exports \
+  data/DAIR-V2X/cooperative-vehicle-infrastructure \
+  data/DAIR-V2X/detected \
+  data/OPV2V \
+  data/V2XSim2; do
   if git -C "$ROOT_DIR" ls-files "$p" | grep -q .; then
     bad_tracked_roots+=("$p")
   fi
