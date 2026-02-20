@@ -7,11 +7,11 @@
 ## 目前已完成
 1. **工具链改造**  
    - `HEAL/opencood/tools/pose_graph_pre_calc.py` 新增 `--per_agent` 模式，可分别指定车端/路端 hypes & checkpoint、强制 ego、限制通讯距离、自动合并双端 JSON。  
-   - `tools/heal_stage1_to_detection_cache.py` 可把 Stage1 导出转换为 V2I-Calib++ 的 detection cache；`configs/pipeline_detection.yaml` 指向该缓存，并设置 `use_detection=true`。
+   - `tools/heal_stage1_to_detection_cache.py` 可把 Stage1 导出转换为 V2I-Calib++ 的 detection cache；`configs/dair/detection/pipeline_detection.yaml` 指向该缓存，并设置 `use_detection=true`。
 2. **实验设置**  
    - **检测导出**：暂用 HEAL stage1 点云模型在车端/路端点云上分别推理（路端缺少专用模型，因此仍是同一模型复用），`single_agent_comm_range=0`，强制不同 ego。  
    - **检测缓存**：`data/DAIR-V2X/detected/heal_stage1_dual_detection_cache.json`，共 1,789 帧双端检测，平均车端 17.4 个框、路端 11.5 个框。  
-   - **标定**：`python tools/run_calibration.py --config configs/pipeline_detection.yaml`，`max_samples=1800`，输出目录 `outputs/heal_detection/`。
+   - **标定**：`python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml`，`max_samples=1800`，输出目录 `outputs/heal_detection/`。
 3. **结果与分析**  
    - `outputs/heal_detection/metrics.json`：`success@{1,2,3,4,5}m=[0.191, 0.192, 0.192, 0.193, 0.194]`，`mRE@{1…5}m=[0.0041, 0.0088, 0.0109, 0.0244, 0.0355]`，`mTE@{1…5}m=[0.0025, 0.0081, 0.0155, 0.0342, 0.0483]`，`avg_time=0.155s`。  
    - `matches.jsonl`：每帧有效匹配均值 1.62，343/1800 帧无任何匹配；TE/RE 中位数依旧在 60–80 m/deg，说明：  
@@ -48,8 +48,8 @@
    - `--require-cav-substrings` 会强制 `cav_id_list` 同时包含 `vehicle` 与 `infrastructure`，可过滤仍然沿用单端检测模型的“伪双端”样本。
    - 统计共有框（可快速检查是否 ≥3/帧）：见 `docs/operations/heal_detection_status.md` 的 Python 片段或直接调用 `matches.jsonl`。
 3. **再跑 V2I-Calib++ 并分析**  
-   - `python tools/run_calibration.py --config configs/pipeline_detection.yaml`。  
-   - 关注成功率是否显著提升；若仍不足，需要从 `configs/pipeline_detection.yaml` 中调整 `filters.top_k`、`matching.distance_thresholds`、`solver.stability_gate` 等参数，并结合 `matches.jsonl` 定位匹配失败原因。
+   - `python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml`。  
+   - 关注成功率是否显著提升；若仍不足，需要从 `configs/dair/detection/pipeline_detection.yaml` 中调整 `filters.top_k`、`matching.distance_thresholds`、`solver.stability_gate` 等参数，并结合 `matches.jsonl` 定位匹配失败原因。
 
 ## 单端检测训练与导出流程
 
@@ -119,8 +119,8 @@
 | 最优 checkpoint | 车端：`HEAL/opencood/logs/Pyramid_DAIR_m1_pointpillars_single_2025_11_24_18_47_23/net_epoch_bestval_at17.pth` (`val loss=0.811`)；路端：`...18_47_32/net_epoch_bestval_at19.pth` (`val loss=0.523`)。 |
 | Stage-1 导出 | `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python opencood/tools/pose_graph_pre_calc.py --per_agent --vehicle_hypes opencood/hypes_yaml/dairv2x/Single/DAIR_single_m1.yaml --vehicle_checkpoint ...17.pth --vehicle_output ../data/DAIR-V2X/detected/veh_single --vehicle_force_ego vehicle --infra_hypes opencood/hypes_yaml/dairv2x/Single/DAIR_single_m1.yaml --infra_checkpoint ...19.pth --infra_output ../data/DAIR-V2X/detected/rsu_single --infra_force_ego infrastructure --merged_output ../data/DAIR-V2X/detected/veh_rsu_dual --single_agent_comm_range 0 --splits test`。脚本同时写入 `veh_frame_id/infra_frame_id` 以对齐 `data_info.json`。 |
 | 检测缓存 | `python tools/heal_stage1_to_detection_cache.py --stage1 data/DAIR-V2X/detected/veh_rsu_dual --output data/DAIR-V2X/detected/veh_rsu_dual_detection_cache.json --require-two-cavs --require-cav-substrings vehicle infrastructure`；随后用 `tools/summarize_detection_cache.py --path data/DAIR-V2X/detected/veh_rsu_dual_detection_cache.json` 补齐 1,800 个索引。统计：1763 帧具备双端检测，路端平均 17.92 个框（2–41），车端 11.58 个框（1–38），共享最少框均值 11.01。 |
-| V2X-Reg++ 设置 | `configs/pipeline_detection.yaml`：`data.detection_cache=data/DAIR-V2X/detected/veh_rsu_dual_detection_cache.json`，`filters.top_k=25`，`matching.filter_threshold=4`，`solver.stability_gate=3`。 |
-| V2X-Reg++ 结果 | `python tools/run_calibration.py --config configs/pipeline_detection.yaml` ⇒ `outputs/heal_detection_single/metrics.json`：`success@1m=0.271`、`success@2m=0.440`、`frames_with_matches=1318`、`avg_time=0.035s`；`matches.jsonl` 供后续分析。 |
+| V2X-Reg++ 设置 | `configs/dair/detection/pipeline_detection.yaml`：`data.detection_cache=data/DAIR-V2X/detected/veh_rsu_dual_detection_cache.json`，`filters.top_k=25`，`matching.filter_threshold=4`，`solver.stability_gate=3`。 |
+| V2X-Reg++ 结果 | `python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml` ⇒ `outputs/heal_detection_single/metrics.json`：`success@1m=0.271`、`success@2m=0.440`、`frames_with_matches=1318`、`avg_time=0.035s`；`matches.jsonl` 供后续分析。 |
 
 **主要发现**
 
@@ -145,7 +145,7 @@
 完成后的下一步：
 1. 对每种 detector 运行 `pose_graph_pre_calc.py --per_agent` 导出 stage-1，保存到 `data/DAIR-V2X/detected/<model_name>/`；
 2. 用 `heal_stage1_to_detection_cache.py` + `summarize_detection_cache.py` 生成 cache 并记录平均检测数；
-3. 以相同的 `configs/pipeline_detection.yaml`（复制一份修改 `top_k/tag` 即可）跑 `python tools/run_calibration.py`，比较不同 detector 对 V2X-Reg++ 的影响；
+3. 以相同的 `configs/dair/detection/pipeline_detection.yaml`（复制一份修改 `top_k/tag` 即可）跑 `python tools/run_calibration.py`，比较不同 detector 对 V2X-Reg++ 的影响；
 4. 将指标追加到本文件和 `docs/operations/experiment_progress.md` 便于交接。
 
 ### 进阶训练 / 模型并行（2025-11-24 晚）

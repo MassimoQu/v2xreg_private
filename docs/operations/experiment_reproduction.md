@@ -55,21 +55,15 @@ All “simulation” experiments now run on UCLA Mobility Lab’s V2X-Set releas
 ln -s /mnt/ssd_gw/cooperative-vehicle-infrastructure/v2xset ~/v2xset
 ```
 
-The repo ships a `legacy/v2x_calib/reader/V2XSet_Reader` helper that understands this directory structure as well as a V2X-Set specific HKUST config at `configs/hkust_v2xset_config.yaml`. All the scripts mentioned below accept `--v2xset-root` / `--split` overrides if you need to point them to another copy.
+The V2X-Set experiments are driven by the HKUST benchmark wrapper and its config at `configs/hkust/hkust_v2xset_config.yaml`. The benchmark scripts accept `--v2xset-root` / `--v2xset-split` overrides if you need to point them to another copy.
 
 ## 3. DAIR-V2X experiments (Table III)
 
-Table III 的当前复现差距汇总（`paper / closest / best`）会持续写入：`docs/operations/table3_paper3737_repro_status.md`。可随时用以下命令刷新：
+All V2X-Reg / V2X-Reg++ numbers in Table III come from the object-level pipeline defined in `calib/pipelines/object_level.py` and configured by the YAMLs under `configs/` (see `configs/README.md`). Run:
 ```bash
-./.micromamba/envs/v2x/bin/python tools/generate_table3_paper3737_repro_report.py \
-  --output docs/operations/table3_paper3737_repro_status.md
+python tools/run_calibration.py --config configs/dair/pipeline.yaml --print
 ```
-
-All V2X-Reg / V2X-Reg++ numbers in Table III come from the object-level pipeline defined in `calib/pipelines/object_level.py` and configured by `configs/pipeline*.yaml`. Run:
-```bash
-python tools/run_calibration.py --config configs/pipeline.yaml --print
-```
-Key knobs (all live inside `configs/pipeline.yaml` unless stated otherwise):
+Key knobs (all live inside `configs/dair/pipeline.yaml` unless stated otherwise):
 
 | Paper setting | How to configure it |
 | --- | --- |
@@ -87,8 +81,8 @@ Every run writes `outputs/<tag>/metrics.json` with the `mRRE@λ`, `mRTE@λ` and 
 
 Best-performing Table III runs (use `success_gate=te_re` by default):
 ```bash
-python tools/run_calibration.py --config configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml --print
-python tools/run_calibration.py --config configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml --print
+python tools/run_calibration.py --config configs/paper3737/dair/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml --print
+python tools/run_calibration.py --config configs/paper3737/dair/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml --print
 ```
 Outputs:
 - PP15: `outputs/paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp/matches.jsonl`
@@ -98,7 +92,7 @@ These configs add solver-side correspondence consistency filtering plus ICP refi
 
 For HEAL dual-agent detection baselines (not the PP/SC rows), continue using:
 ```bash
-python tools/run_calibration.py --config configs/pipeline_detection.yaml
+python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml
 ```
 
 ### 3.2 HKUST baselines without initial values (FGR/Quatro/Teaser++, Table III lower block)
@@ -107,13 +101,13 @@ Run `benchmarks/hkust_lidar_global_registration_benchmark.py` with the DAIR conf
 ```bash
 # Teaser++ (multi-mode FPFH + ICP, used in Table III)
 python benchmarks/hkust_lidar_global_registration_benchmark.py \
-  --config configs/hkust_lidar_global_config.yaml \
+  --config configs/hkust/hkust_lidar_global_config.yaml \
   --max-pairs 30 \
   --output-tag hkust_teaser_daair
 
 # Same script but `rotation_estimation_algorithm` set to "FGR" or "QUATRO"
 python benchmarks/hkust_lidar_global_registration_benchmark.py \
-  --config configs/hkust_lidar_global_config.yaml \
+  --config configs/hkust/hkust_lidar_global_config.yaml \
   --max-pairs 30 \
   --output-tag hkust_quatro \
   --v2xsim-root /path/to/v2xsim2_info
@@ -135,7 +129,7 @@ Use the same thresholds (`rot_thd=5`, `trans_thd=2`) so the metrics match Table 
 Use `benchmarks/run_cbm_benchmark.py`, which already injects Gaussian noise and optionally runs ICP refinement:
 ```bash
 python benchmarks/run_cbm_benchmark.py \
-  --config configs/pipeline_hkust.yaml \
+  --config configs/hkust/pipeline_hkust.yaml \
   --max-pairs 30 \
   --output-tag cbm_gt_boxes \
   --trans-noise 2.0 \
@@ -152,11 +146,11 @@ Variants:
 
 See Section 2.3 for the dataset layout and the new helper reader/configs. Table II is now reproduced with the following components:
 
-* **HKUST baselines** – run `benchmarks/hkust_lidar_global_registration_benchmark.py --config configs/hkust_v2xset_config.yaml` with `--rotation-alg {GNC_TLS,FGR,QUATRO}` and `--max-pairs 20`. Metrics for Teaser++/FGR/Quatro are saved in `outputs/hkust_teaser/v2xset_*`. All three methods reported `success@{1…5 m}=0` on V2X-Set despite ICP refinement; average runtimes were 5.8 s (Teaser++), 8.2 s (FGR) and 8.5 s (Quatro).
+* **HKUST baselines** – run `benchmarks/hkust_lidar_global_registration_benchmark.py --config configs/hkust/hkust_v2xset_config.yaml` with `--rotation-alg {GNC_TLS,FGR,QUATRO}` and `--max-pairs 20`. Metrics for Teaser++/FGR/Quatro are saved in `outputs/hkust_teaser/v2xset_*`. All three methods reported `success@{1…5 m}=0` on V2X-Set despite ICP refinement; average runtimes were 5.8 s (Teaser++), 8.2 s (FGR) and 8.5 s (Quatro).
 * **V2X-Reg++ (oDist)** – `tools/run_v2xset_object_eval.py` mimics `ObjectLevelPipeline` while sampling cooperative pairs from V2X-Set. Example:
   ```bash
   PYTHONPATH=. python tools/run_v2xset_object_eval.py \
-    --config configs/pipeline.yaml \
+    --config configs/dair/pipeline.yaml \
     --split validate \
     --frame-stride 20 \
     --max-pairs 200 \
@@ -194,7 +188,7 @@ The HKUST baselines consistently diverged on V2X-Set (all success metrics zero) 
 | Noise | Disabled unless explicitly sweeping σ_t / σ_r |
 | Hardware/env | Python 3.10, PyTorch 2.3, Open3D 0.17, single RTX 3090 (not critical, CPU-bound) |
 | CLI defaults | `tools/run_v2xset_object_eval.py --core-components ['centerpoint_distance','vertex_distance'] --filter-strategy thresholdRetained --matches2extrinsic weightedSVD` |
-| HKUST params | `configs/hkust_v2xset_config.yaml` + ICP enabled, beams aligned disabled |
+| HKUST params | `configs/hkust/hkust_v2xset_config.yaml` + ICP enabled, beams aligned disabled |
 
 ### 4.5 Why numbers differ from the paper
 

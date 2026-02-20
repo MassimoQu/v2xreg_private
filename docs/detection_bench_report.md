@@ -1,7 +1,7 @@
 # DAIR-V2X 检测框 Benchmark 汇总（P2 阶段）
 
 日期：2025-11-22  
-配置：`configs/pipeline_detection.yaml`（use_detection=true, max_samples=1000, data_info=data/DAIR-V2X/cooperative/.../data_info.json，过滤/匹配与 GT 版本一致），输出脚本：`tools/run_detection_bench.py`
+配置：`configs/dair/detection/pipeline_detection.yaml`（use_detection=true, max_samples=1000, data_info=data/DAIR-V2X/cooperative/.../data_info.json，过滤/匹配与 GT 版本一致），输出脚本：`tools/run_detection_bench.py`
 
 | 检测源 | Success@1m | Success@2m | success_frames | mRE@1m | mTE@1m | avg_time (s) | 输出目录 |
 | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -1,6 +1,6 @@
 # P0 阶段：HEAL 检测 → V2X-Reg++ 离线融合验证
 
-本报告记录了“导入 HEAL 检测结果，离线运行 V2X-Reg++ 标定流水线，并输出精度对比”的 P0 打通过程。V2X-Reg++ 默认使用距离（oDist）关联检测框；若需要回滚到旧版 V2I-Calib（oIoU 关联），可在 `configs/pipeline*.yaml` 中切换 `matching.strategy`。验证数据为 DAIR-V2X 测试集，硬件为单机 CPU（RTX GPU 未使用）。
+本报告记录了“导入 HEAL 检测结果，离线运行 V2X-Reg++ 标定流水线，并输出精度对比”的 P0 打通过程。V2X-Reg++ 默认使用距离（oDist）关联检测框；若需要回滚到旧版 V2I-Calib（oIoU 关联），可在 `configs/dair/pipeline.yaml`（及其变体配置）中切换 `matching.strategy`。验证数据为 DAIR-V2X 测试集，硬件为单机 CPU（RTX GPU 未使用）。
 
 ## 1. 数据准备与工具
 
@@ -16,16 +16,16 @@
      `--deproject-to-local` 使用 `lidar_pose_clean_np` 先把所有 corner 从 “ego/vehicle” 坐标系转换回各自传感器坐标；`--swap-order` 用于把路端放在列表首位，满足 `DetectionAdapter` 的 `infra/vehicle` 假设。
 
 2. **运行标定流水线**  
-   - 使用 `tools/run_calibration.py --config configs/pipeline.yaml` 获取 GT 基准。
-   - 使用 `tools/run_calibration.py --config configs/pipeline_detection.yaml` 评估 HEAL 检测（`use_detection: true`）。
+   - 使用 `tools/run_calibration.py --config configs/dair/pipeline.yaml` 获取 GT 基准。
+   - 使用 `tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml` 评估 HEAL 检测（`use_detection: true`）。
    - 输出位于 `outputs/<tag>/metrics.json` 与 `matches.jsonl`，默认包含 RE/TE、运行时间、匹配日志等。
 
 ## 2. 实验结果
 
 | 输入来源 | 样本数 | mRE@1m | mTE@1m | Success@1m | Success@2m | 平均耗时 (s/frame) | 全局 RE 均值 (°) | 全局 TE 均值 (m) | RE 中位 (°) | TE 中位 (m) | 平均匹配数 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GT 框 (`configs/pipeline.yaml`, `outputs/20251122-024208`) | 3000 | 0.378 | 0.215 | 0.565 | 0.739 | 0.061 | 13.58 | 12.52 | 0.99 | 0.73 | 1.71 |
-| HEAL 检测（反投影后；`configs/pipeline_detection.yaml`, `outputs/detection`） | 500 | 0.000* | 0.000* | 0.180† | 0.180† | 0.129 | 78.28‡ | 75.33‡ | 86.05‡ | 74.98‡ | 1.64‡ |
+| GT 框 (`configs/dair/pipeline.yaml`, `outputs/20251122-024208`) | 3000 | 0.378 | 0.215 | 0.565 | 0.739 | 0.061 | 13.58 | 12.52 | 0.99 | 0.73 | 1.71 |
+| HEAL 检测（反投影后；`configs/dair/detection/pipeline_detection.yaml`, `outputs/detection`） | 500 | 0.000* | 0.000* | 0.180† | 0.180† | 0.129 | 78.28‡ | 75.33‡ | 86.05‡ | 74.98‡ | 1.64‡ |
 
 \* `mRE@1m` 与 `mTE@1m` 仅统计 TE < 1m 的样本；在检测数据中这部分样本全部来自“无匹配 → 默认 0” 的 fallback，因此指标为 0。  
 † `success_at_{1,2}m` 同样受 fallback 影响，不能反映真实成功率，需参考“全局均值/中位值”。  

@@ -7,10 +7,10 @@
 | 路径 | 类型 | 主要内容 / 用途 | 依赖关系与引用 | 删除影响 / 备注 |
 | --- | --- | --- | --- | --- |
 | `README.md` | Markdown | 项目介绍、论文链接、可视化、实验表格。 | 对外宣传、GitHub 首页、文档引用图片 `static/images`、`static/visuals/thumbnail_*.png`。 | **核心**：删掉会失去对外说明。 |
-| `benchmarks/` | 目录 | 包含 `hkust_lidar_global_registration_benchmark.py`、`run_dair_lidar_benchmark.py` 及 `third_party/LiDAR-Registration-Benchmark` 子模块。 | 依赖 `configs/hkust_lidar_global_config.yaml`、`legacy.v2x_calib.*`。 | 保留；用于对接 HKUST 基准。 |
-| `calib/` | 包 | 新版模块化 pipeline（数据、filters、matching、solvers、pipelines 等）。 | `configs/pipeline*.yaml`、`tools/run_calibration.py`、CI 未来引用。 | **核心代码**；删除将失去重构目标实现。 |
+| `benchmarks/` | 目录 | 包含 `hkust_lidar_global_registration_benchmark.py`、`run_dair_lidar_benchmark.py` 及 `third_party/LiDAR-Registration-Benchmark` 子模块。 | 依赖 `configs/hkust/hkust_lidar_global_config.yaml`、`legacy.v2x_calib.*`。 | 保留；用于对接 HKUST 基准。 |
+| `calib/` | 包 | 新版模块化 pipeline（数据、filters、matching、solvers、pipelines 等）。 | `configs/README.md`（配置入口）、`tools/run_calibration.py`、CI 未来引用。 | **核心代码**；删除将失去重构目标实现。 |
 | `config/` | 包 | 兼容层（将 `config.config` 指向 `configs.legacy_api`）。 | 仅当旧路径不可避免时使用。 | 建议逐步淘汰，首选 `configs.*`。 |
-| `configs/` | 配置 | 新 pipeline 的 YAML（`pipeline.yaml`, `pipeline_detection.yaml`）。 | `tools/run_calibration.py`、`calib/pipelines`。 | 如改用其他配置方式可整合；否则需保留。 |
+| `configs/` | 配置 | pipeline 的 YAML 配置树（已按主题分目录，入口见 `configs/README.md`）。 | `tools/run_calibration.py`、`calib/pipelines`。 | 如改用其他配置方式可整合；否则需保留。 |
 | `data/` | 数据 | 本地 DAIR-V2X / V2X-Sim 样本、检测缓存。 | 几乎所有 reader（`v2x_calib.reader`、`calib.data`）需要。 | **必要**。删除需另行存储数据。 |
 | `docs/` | 文档 | 细分为 `architecture/`（如 `refactor_plan.md`）与 `operations/`（如本文件）。 | 产品规划参考、代码清理依据。 | 文档性，可视需要保留。 |
 | `.git/` | Git 元数据 | Git 历史。 | 版本控制。 | 不能删除。 |
@@ -32,7 +32,7 @@
 
 ### `calib/`
 
-- `config.py`：集中读取 `configs/pipeline*.yaml`，提供 dataclass 样式配置对象。
+- `config.py`：读取 YAML 配置并提供 dataclass 样式配置对象（主入口见 `configs/README.md`）。
 - `data/`：`dataset_manager.py`、`sample_loader` 等新式数据读写封装，逐步替换 `v2x_calib.reader`。
 - `filters/`：数据筛选逻辑（置信度、Top-K、距离等），对应重构方案第 2 节。
 - `matching/`：`match_engine.py`, `similarity.py` 等组件，封装 oIoU/oDist。
@@ -44,7 +44,7 @@
 ### `config/`
 
 - `config.py`：兼容层，重定向到 `legacy/config.py` 以支持旧脚本 (`cfg`, `Logger` 等)。
-- `hkust_lidar_global_config.yaml`：HKUST benchmark 运行用到的路径 + FPFH 超参。
+- HKUST benchmark 的 YAML 配置在 `configs/hkust/` 下（见 `configs/README.md`）。
 
 > 新代码推荐使用 `calib.config.*`；若完全停用 HKUST 对比，可考虑删除该兼容层。
 

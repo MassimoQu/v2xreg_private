@@ -56,37 +56,37 @@ HEAL 的 DAIR dataset 读取逻辑以 `veh_frame_id` 作为 split 列表元素�
 ### B. 复现结果（paper3737，Success gate 口径说明 + 当前对齐情况）
 
 推荐配置（产出 `matches.jsonl/details.jsonl` 覆盖 3737/3737）：
-- PP15：`configs/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2.yaml`
+- PP15：`configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2.yaml`
   - 输出：`outputs/paper3737_pp15_heal_pp_corners_conf0p3_iter2/metrics.json`
   - 该 run 的 `matches.jsonl` 重新计算：
     - `success_gate=te`（仅 TE<thr）：Success@{1,2,3}m = **{0.329, 0.611, 0.728}**
     - `success_gate=te_re`（TE<thr 且 RE<thr）：Success@{1,2,3}m = **{0.184, 0.502, 0.678}**
-- SC15：`configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2.yaml`
+- SC15：`configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2.yaml`
   - 输出：`outputs/paper3737_sc15_heal_sc_corners_conf0p3_iter2/metrics.json`
   - 该 run 的 `matches.jsonl` 重新计算：
     - `success_gate=te`（仅 TE<thr）：Success@{1,2,3}m = **{0.339, 0.632, 0.734}**
     - `success_gate=te_re`（TE<thr 且 RE<thr）：Success@{1,2,3}m = **{0.195, 0.535, 0.700}**
 
 2026-01-14 补充：为进一步贴近 Table III（`te_re`）的 PP/SC 行，新增了更严格的 SVD inlier gating（`solver.inlier_threshold_m=0.75`）并适度放宽检测匹配距离（`matching.distance_thresholds.detected=1.2`），在不改变数据集/评测口径的前提下可显著缩小差距：
-- PP15（closest，Table III 对齐优先）：`configs/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_max6.yaml`
+- PP15（closest，Table III 对齐优先）：`configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_max6.yaml`
   - 输出：`outputs/paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_max6/matches.jsonl`
   - `success_gate=te_re`：Success@{1,2,3}m = **{0.186, 0.516, 0.694}**（论文 0.249/0.566/0.709）
-- SC15（closest/best）：`configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2_inlier0p75_det1p2.yaml`
+- SC15（closest/best）：`configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2_inlier0p75_det1p2.yaml`
   - 输出：`outputs/paper3737_sc15_heal_sc_corners_conf0p3_iter2_inlier0p75_det1p2/matches.jsonl`
   - `success_gate=te_re`：Success@{1,2,3}m = **{0.204, 0.547, 0.711}**（论文 0.252/0.569/0.712）
 
 2026-01-15 补充：为减少“TE 已达标但 RE 稍超阈值”导致的 `te_re` Success 损失，加入了 **confidence-aware 的 wSVD 加权**（仅影响 wSVD 的权重，不改匹配集），并配合“不过早截断 retained matches”做了一轮小规模 sweep：
 - 新增 solver 配置项：`solver.confidence_weight_exponent`、`solver.confidence_weight_min`（默认 0，不影响历史结果）。
 - 当前 paper3737 PP15 的 `te_re` closest/best 更新为：
-  - `configs/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_nomax_confexp2p0.yaml`
+  - `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_nomax_confexp2p0.yaml`
   - 输出：`outputs/paper3737_pp15_heal_pp_corners_conf0p3_iter2_inlier0p75_det1p2_nomax_confexp2p0/matches.jsonl`
   - `success_gate=te_re`：Success@{1,2,3}m = **{0.193, 0.520, 0.695}**（论文 0.249/0.566/0.709；仍差约 4–6pp，主要瓶颈依旧是 RE）
 
 2026-01-19 补充：加入 solver 侧**匹配一致性过滤**（`consistency_threshold_m=1.5` + `consistency_min_support=2`）并在候选解上做 ICP refine（`icp_refine_on_solution=true`），PP/SC 在 `success_gate=te_re` 口径下已超过论文：
-- PP15（best）：`configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml`
+- PP15（best）：`configs/paper3737/dair/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml`
   - 输出：`outputs/paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp/matches.jsonl`
   - `success_gate=te_re`：Success@{1,2,3}m = **{0.266, 0.573, 0.726}**（论文 0.249/0.566/0.709）
-- SC15（best）：`configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml`
+- SC15（best）：`configs/paper3737/dair/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml`
   - 输出：`outputs/paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp/matches.jsonl`
   - `success_gate=te_re`：Success@{1,2,3}m = **{0.264, 0.589, 0.738}**（论文 0.252/0.569/0.712）
 
@@ -110,8 +110,8 @@ HEAL 的 DAIR dataset 读取逻辑以 `veh_frame_id` 作为 split 列表元素�
 ### D. 7D（`pred_box3d_np_list`）验证（结论：本次提升不来自“消除角点歧义”）
 
 使用 7D 字段（`data.detection_field: pred_box3d_np_list`）跑出的指标与 corners 基本一致：
-- `configs/pipeline_paper3737_pp15_heal_pp_7d.yaml`
-- `configs/pipeline_paper3737_sc15_heal_sc_7d.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_7d.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_7d.yaml`
 
 说明：本次 paper3737 上的提升主要来自 **检测覆盖率/对齐正确 + 置信度过滤 + SVD 稳健迭代**，而不是 7D 自动解决了歧义。
 
@@ -134,17 +134,17 @@ HEAL 的 DAIR dataset 读取逻辑以 `veh_frame_id` 作为 split 列表元素�
 ### 3) 新增复现实验配置（paper3737 PP/SC，corners/7D，对比 180 开关）
 
 新增配置文件：
-- `configs/pipeline_paper3737_pp15_heal_pp_corners.yaml`
-- `configs/pipeline_paper3737_pp15_heal_pp_7d.yaml`
-- `configs/pipeline_paper3737_pp15_heal_pp_corners_iter2.yaml`
-- `configs/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2.yaml`
-- `configs/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2_180.yaml`
-- `configs/pipeline_paper3737_sc15_heal_sc_corners.yaml`
-- `configs/pipeline_paper3737_sc15_heal_sc_7d.yaml`
-- `configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2.yaml`
-- `configs/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2_180.yaml`
-- `configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml`
-- `configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_7d.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners_iter2.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_heal_pp_corners_conf0p3_iter2_180.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_corners.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_7d.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_sc15_heal_sc_corners_conf0p3_iter2_180.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml`
+- `configs/paper3737/dair/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml`
 
 贡献：
 - 固化“一键复现” paper3737 PP/SC 全流程与对比设置；
@@ -205,8 +205,8 @@ MAMBA_ROOT_PREFIX=$PWD/.micromamba ./bin/micromamba run -p /home/qqxluca/minicon
 3) 跑标定（推荐配置：PP/SC 各 1 个）
 ```bash
 MAMBA_ROOT_PREFIX=$PWD/.micromamba ./bin/micromamba run -n v2x \
-  python tools/run_calibration.py --config configs/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml --print
+  python tools/run_calibration.py --config configs/paper3737/dair/pipeline_paper3737_pp15_pcalwh_topkCand15_25_30_35_confexp2_consistency1p5_icp.yaml --print
 
 MAMBA_ROOT_PREFIX=$PWD/.micromamba ./bin/micromamba run -n v2x \
-  python tools/run_calibration.py --config configs/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml --print
+  python tools/run_calibration.py --config configs/paper3737/dair/pipeline_paper3737_sc15_pcalwh_gate1_confexp2_consistency1p5_icp.yaml --print
 ```

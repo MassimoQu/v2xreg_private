@@ -30,8 +30,8 @@ V2X-Reg++ 的匹配阶段由 `MatchingEngine`（参见 `calib/matching/engine.py
 
 ### 2.3 推论与实验支撑
 
-1. **必要性**：若匹配阶段只保留一个盒子，但盒子内部角点顺序不同，则 SVD 会错误地将无关点对齐，导致求解发散。实测（`configs/pipeline_hkust_vertexshuffle.yaml`）中仅打乱车侧角点顺序后，`success_with_matches@1m` 下降至 0。  
-2. **充分性**：若两侧采用相同的重排（即便不是 canonical 顺序），SVD 仍可得到正确解（参见 `configs/pipeline_hkust_vertexshuffle_both.yaml`），说明“顺序一致”而非“唯一顺序”才是关键。  
+1. **必要性**：若匹配阶段只保留一个盒子，但盒子内部角点顺序不同，则 SVD 会错误地将无关点对齐，导致求解发散。实测（`configs/hkust/pipeline_hkust_vertexshuffle.yaml`）中仅打乱车侧角点顺序后，`success_with_matches@1m` 下降至 0。  
+2. **充分性**：若两侧采用相同的重排（即便不是 canonical 顺序），SVD 仍可得到正确解（参见 `configs/hkust/pipeline_hkust_vertexshuffle_both.yaml`），说明“顺序一致”而非“唯一顺序”才是关键。  
 3. **实践启示**：一旦引入只输出角点的第三方检测器，必须在进入匹配前把角点 canonicalize——例如先反算 `(center, l, w, h, yaw)`，再按模板顺序重建。否则就无法满足 SVD 的先决条件。
 
 综上，V2X-Reg++ 通过“物体级匹配 + 盒子模板化”这一组合，构造了一个从检测框到角点的双层对应关系，使得 SVD 在 3D 点集之间能够直接应用闭式解。新的 `success_with_matches` 指标也能帮助我们快速识别任何破坏这一假设的改动。

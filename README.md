@@ -41,19 +41,20 @@ This visualization (`static/visuals/merged_output.mp4`) compares the bounding bo
 
 This is the private working tree for paper reproduction + extensions. Use the docs under `docs/operations/` as the source of truth; this section is a concise snapshot.
 
-- **Table III (paper3737) reproduction:** live report in `docs/operations/table3_paper3737_repro_status.md` (jsonl re-scored, no fragment mixing). PP/SC detection best currently exceed paper under `te_re` (PP15 26.57/57.27/72.60, SC15 26.41/58.92/73.78). HKUST baselines still below paper (best success@1/2/3 ≈ 21–23 / 35–38 / 42–46). ICP/PICP full 3k×noise runs remain pending (only 100-frame smoke runs completed).
+- **Table III (paper3737) reproduction:** live report in `docs/operations/table3_paper3737_repro_status.md` (jsonl re-scored, no fragment mixing). PP/SC detection best currently exceed paper under `te_re` (PP15 26.57/57.27/72.60, SC15 26.41/58.92/73.78). HKUST baselines still below paper (best success@1/2/3 ≈ 21–23 / 35–38 / 42–46). ICP/PICP noise0/1/2 sweeps are complete (see `docs/operations/experiment_progress.md`).
 - **Descriptor / detection extensions:** camera descriptors (pixel/HOG/ResNet/DINOv2) and BEV descriptors are tracked in `docs/operations/experiment_progress.md`. Current best Top-3000 camera smoke hits ~0.54/0.655/0.73; descriptor hint/seed and weighted variants did not improve the full runs.
 - **HEAL integration & pose correction:** stable pose correction sweeps and V2V4Real multi-ego notes live in `docs/operations/heal_pose_alignment_*`. Late vs mid fusion AP curves are nearly identical; stable corrections have not produced meaningful AP gains yet.
 - **Speed/engineering:** vectorized matching + IoU fast paths reduce runtime to <0.1s/frame on Top-3000; `seed_top_k` for GT∞ preserves accuracy while cutting runtime to ~52 ms/frame.
-- **Known gaps / next:** HKUST baselines still misaligned with paper time/accuracy, ICP/PICP full runs are outstanding, detection test split is still running, and GPU-dependent BEV feature dumps are blocked.
+- **Known gaps / next:** HKUST baselines still misaligned with paper time/accuracy, detection test split is still running, and GPU-dependent BEV feature dumps are blocked.
 
 ## Major Additions in This Private Tree
 
-- Paper-aligned 3737-pair reproduction pipeline: `data/data_info_dair_paper3737.json`, `configs/pipeline_paper3737_*.yaml`, `tools/generate_table3_paper3737_repro_report.py`.
+- Paper-aligned 3737-pair reproduction pipeline: `data/data_info_dair_paper3737.json`, `configs/paper3737/dair/pipeline_paper3737_*.yaml`, `tools/generate_table3_paper3737_repro_report.py`.
 - Table III triage & sweep helpers: `tools/sweep_*_table3.py`, `tools/measure_table3_time.py`, `docs/operations/ppsc_paper3737_repro_20260111.md`.
 - HEAL integration & pose alignment: `HEAL/` submodule updates + `docs/operations/heal_pose_alignment_*`.
-- Descriptor and feature experiments: `configs/pipeline_camera_desc_*.yaml`, `configs/pipeline_detection_desc_*.yaml`, `docs/operations/v2xregpp_midfusion_occ_hint.md`.
+- Descriptor and feature experiments: `configs/camera/desc/pipeline_camera_desc_*.yaml`, `configs/dair/detection/pipeline_detection_desc_*.yaml`, `docs/operations/v2xregpp_midfusion_occ_hint.md`.
 - Dataset adaptation notes and non-invasive split handling: `docs/operations/dataset_adaptation_non_invasive.md`, `tools/build_*_data_info.py`.
+- Repo transfer + OPV2V benchmark reproduction: `docs/operations/repo_transfer.md`, `docs/operations/opv2v_benchmark_repro.md`, `scripts/*opv2v*`.
 
 ## News
 
@@ -74,18 +75,23 @@ This is the private working tree for paper reproduction + extensions. Use the do
 The configs used in the paper are bundled under `configs/`. Each experiment can be launched via `python tools/run_calibration.py --config <CONFIG> [--print]`. Typical demos include:
 
 - **DAIR-V2X LiDAR (GT boxes, single-pair calibration).**  
-  `python tools/run_calibration.py --config configs/pipeline.yaml --print`  
+  `python tools/run_calibration.py --config configs/dair/pipeline.yaml --print`  
   Requires DAIR-V2X metadata plus ground-truth boxes packaged by `tools/dair_to_calib_cache.py`.
 
 - **DAIR-V2X LiDAR (HEAL detections, no priors).**  
-  `python tools/run_calibration.py --config configs/pipeline_detection.yaml --print`  
+  `python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml --print`  
   Uses detection caches from HEAL stage-1; see `docs/operations/experiment_reproduction.md` for download links.
 
 - **HKUST multi-agent LiDAR benchmark.**  
-  `python tools/run_calibration.py --config configs/pipeline_hkust.yaml --print`  
+  `python tools/run_calibration.py --config configs/hkust/pipeline_hkust.yaml --print`  
   Demonstrates the batched evaluation used in `docs/operations/hkust_vs_v2icalib_report.md`.
 
-Other configs (e.g., `pipeline_detection_subset.yaml`, `pipeline_hkust_temporal.yaml`, `pipeline_descriptor.yaml`) are WIP variants that explore different data splits or matching strategies—the scripts are functional but the surrounding documentation/tests are still being finalized as part of the ongoing refactor described above.
+Other configs (e.g., `configs/dair/detection/pipeline_detection_subset.yaml`, `configs/hkust/pipeline_hkust_temporal.yaml`, `configs/dair/misc/pipeline_descriptor.yaml`) are WIP variants that explore different data splits or matching strategies—the scripts are functional but the surrounding documentation/tests are still being finalized as part of the ongoing refactor described above.
+
+## OPV2V Full Benchmark (HEAL)
+
+For the full OPV2V camera + LiDAR benchmark (noise sweep + dropout sweep),
+see `docs/operations/opv2v_benchmark_repro.md`.
 
 ## Experimental Comparison
 
@@ -541,7 +547,7 @@ source legacy/setup.sh
 ### Minimal Test
 Use the new object-level pipeline driver:
 ```
-python tools/run_calibration.py --config configs/pipeline.yaml --print
+python tools/run_calibration.py --config configs/dair/pipeline.yaml --print
 ```
 This command loads ground-truth boxes, runs the filtering/matching/SVD stack, prints the summary metrics, and stores detailed logs under `outputs/<timestamp>/`.
 
@@ -549,7 +555,7 @@ This command loads ground-truth boxes, runs the filtering/matching/SVD stack, pr
 ### Batch Test
 Larger experiments use the same entrypoint with the desired config, e.g.:
 ```
-python tools/run_calibration.py --config configs/pipeline_detection.yaml
+python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml
 ```
 By default each run creates `outputs/<tag>/metrics.json` and `outputs/<tag>/matches.jsonl`. Use `python tools/analyze_matches.py --matches outputs/<tag>/matches.jsonl` to inspect success rates at different thresholds.
 
@@ -600,16 +606,16 @@ ln -s ${DAIR-V2X-C_DATASET_ROOT}/cooperative-vehicle-infrastructure ${v2i-calib_
 #### Run Pipeline Command
 
 ```
-python tools/run_calibration.py --config configs/pipeline.yaml
+python tools/run_calibration.py --config configs/dair/pipeline.yaml
 ```
 Set `output.tag` inside the YAML (or override via CLI) to control where metrics are written. Use the detection-specific config for detector boxes:
 ```
-python tools/run_calibration.py --config configs/pipeline_detection.yaml
+python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml
 ```
 
 ### Explanation of Key Configuration Parameters
 
-The primary configuration lives in `configs/pipeline.yaml` (and `configs/pipeline_detection.yaml` for detector boxes). Adjust `filters` for box selection, `matching` for oIoU/oDist components, and `solver` for stability gates. To switch metrics, edit `matching.core_components`, e.g., `['iou']` for oIoU or `['centerpoint_distance', 'vertex_distance']` for oDist.
+The primary configuration lives in `configs/dair/pipeline.yaml` (and `configs/dair/detection/pipeline_detection.yaml` for detector boxes). Adjust `filters` for box selection, `matching` for oIoU/oDist components, and `solver` for stability gates. To switch metrics, edit `matching.core_components`, e.g., `['iou']` for oIoU or `['centerpoint_distance', 'vertex_distance']` for oDist.
 
 
 ## Acknowledgment

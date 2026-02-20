@@ -57,12 +57,12 @@
 ### 4.1 对齐后的中融合（GT 框 + occ hint）超过 late baseline
 
 - **Late baseline (GT, top-15)**  
-  - config：`configs/pipeline_gt_top3000_15.yaml`  
+  - config：`configs/dair/gt/pipeline_gt_top3000_15.yaml`  
   - output：`outputs/gt_top3000_15_full3000/metrics.json`  
   - `success_at_1m = 0.3383`, `success_at_2m = 0.4937`
 
 - **Mid-fusion (GT, top-15) + occ hint + aligned matching + ratio gating**  
-  - config：`configs/pipeline_midfusion_gt_occ_r14.yaml`（`occ_hint_min_peak_ratio: 1.4`）  
+  - config：`configs/dair/midfusion/pipeline_midfusion_gt_occ_r14.yaml`（`occ_hint_min_peak_ratio: 1.4`）  
   - output：`outputs/gt_occ_aligned_r14/metrics.json`  
   - `success_at_1m = 0.3470`, `success_at_2m = 0.5017`
 
@@ -70,7 +70,7 @@
 
 ```bash
 ~/miniconda3/envs/v2icalib/bin/python tools/run_pipeline.py \
-  --config configs/pipeline_midfusion_gt_occ_r14.yaml \
+  --config configs/dair/midfusion/pipeline_midfusion_gt_occ_r14.yaml \
   --tag gt_occ_aligned_r14
 ```
 
@@ -85,9 +85,9 @@
 
 ### 5.2 新增/用于复现的配置文件
 
-- `configs/pipeline_gt_top3000_15.yaml`
-- `configs/pipeline_midfusion_gt_occ_r14.yaml`（推荐复现配置）
-- 以及若干对照/中间实验配置（`configs/pipeline_midfusion_detection_occ.yaml`、`configs/pipeline_late_detection_bevdesc*.yaml` 等）
+- `configs/dair/gt/pipeline_gt_top3000_15.yaml`
+- `configs/dair/midfusion/pipeline_midfusion_gt_occ_r14.yaml`（推荐复现配置）
+- 以及若干对照/中间实验配置（`configs/dair/midfusion/pipeline_midfusion_detection_occ.yaml`、`configs/dair/late/pipeline_late_detection_bevdesc*.yaml` 等）
 
 ### 5.3 HEAL 单端导出/描述子相关改动（支撑中融合特征来源）
 

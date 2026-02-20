@@ -16,15 +16,15 @@
 ## 2. 运行的命令
 
 ### 2.1 V2X-Reg++ Pipeline（原 V2I-Calib++）
-- 配置文件：`configs/pipeline_hkust.yaml`
-- 命令：`python tools/run_calibration.py --config configs/pipeline_hkust.yaml --print`
+- 配置文件：`configs/hkust/pipeline_hkust.yaml`
+- 命令：`python tools/run_calibration.py --config configs/hkust/pipeline_hkust.yaml --print`
 - 输出：`outputs/v2i_vs_hkust/metrics.json` & `matches.jsonl`
 - 配置关键参数：`max_samples = 30`、GT boxes、weighted SVD、成功判定阈值 `[1m, 2m, 3m, 4m, 5m]`。
-- 关联策略说明：当前默认使用 **oDist**（基于中心距离）进行对象关联，对应论文中的 V2X-Reg++；如需复现早期的 V2I-Calib，可在 `configs/pipeline_hkust.yaml` 中启用 **oIoU** 关联。
+- 关联策略说明：当前默认使用 **oDist**（基于中心距离）进行对象关联，对应论文中的 V2X-Reg++；如需复现早期的 V2I-Calib，可在 `configs/hkust/pipeline_hkust.yaml` 中启用 **oIoU** 关联。
 
 ### 2.2 HKUST FPFH+TEASER
-- 配置文件：`configs/hkust_lidar_global_config.yaml`
-- 增强后的脚本：`python benchmarks/hkust_lidar_global_registration_benchmark.py --config configs/hkust_lidar_global_config.yaml --max-pairs 30 --output-tag hkust_teaser_30`
+- 配置文件：`configs/hkust/hkust_lidar_global_config.yaml`
+- 增强后的脚本：`python benchmarks/hkust_lidar_global_registration_benchmark.py --config configs/hkust/hkust_lidar_global_config.yaml --max-pairs 30 --output-tag hkust_teaser_30`
 - 脚本改动：支持 start/end/max-pairs、输出 `matches.jsonl`、`metrics.json`（路径 `outputs/hkust_teaser/<tag>/`）。
 - 数据读取统一传入 `path_data_folder=cfg.data.data_root_path`，避免路径错误。
 
@@ -94,7 +94,7 @@
 ### 6.1 步骤概览
 
 1. **对齐线数**：新增 `infra.beam_alignment` 以在读取点云后先做随机子采样，再可选按车辆垂直角度裁剪，所有中间统计写入 `matches.jsonl`（`benchmarks/hkust_lidar_global_registration_benchmark.py:22-338`）。
-2. **重写 FPFH 配置**：基于更稀疏的 40 线点云，把基础 voxel/半径调小（`configs/hkust_lidar_global_config.yaml:13-34`），车端参数保持原样。
+2. **重写 FPFH 配置**：基于更稀疏的 40 线点云，把基础 voxel/半径调小（`configs/hkust/hkust_lidar_global_config.yaml:13-34`），车端参数保持原样。
 3. **角度匹配**：结合“车端 40 线视场窄”这一事实，引入垂直角分位裁剪，只保留车辆可见角度范围。
 4. **ICP 精细化**：在 TEASER 初值基础上执行点到平面的 Open3D ICP（`post_refine.icp`），减少 TE，并记录 `icp_fitness` / `icp_inlier_rmse`。
 5. **噪声界限与半径 sweep**：尝试调大 `noise_bound`、改动 ICP 距离等，最终确认 `noise_bound=1.0 m`、`max_correspondence_distance=1.5 m`、`max_iterations=60` 组合最佳（`..._icp10` 的 1.0 m 距离反而退化）。
@@ -141,7 +141,7 @@
 - 运行命令示例：
   ```
   python benchmarks/run_cbm_benchmark.py \
-      --config configs/pipeline_hkust.yaml \
+      --config configs/hkust/pipeline_hkust.yaml \
       --max-pairs 30 \
       --output-tag cbm_gt_boxes \
       --trans-noise 2.0 \
@@ -159,7 +159,7 @@
 
 ### 7.1 初值噪声敏感性（平移/旋转 sweep）
 
-- 实验设置：`python benchmarks/run_cbm_benchmark.py --config configs/pipeline_hkust.yaml --max-pairs 30 --trans-noise σ_t --rot-noise-deg σ_r --output-tag cbm_noise_t{σ_t}_r{σ_r}`，其余流程（SVD+ICP）不变。额外跑了 `--identity-init` 作为“完全无初值”参考。
+- 实验设置：`python benchmarks/run_cbm_benchmark.py --config configs/hkust/pipeline_hkust.yaml --max-pairs 30 --trans-noise σ_t --rot-noise-deg σ_r --output-tag cbm_noise_t{σ_t}_r{σ_r}`，其余流程（SVD+ICP）不变。额外跑了 `--identity-init` 作为“完全无初值”参考。
 - 观测指标：取 30 帧 DAIR-V2X 子集，在 `evaluation.success_thresholds=[1…5]` 下计算成功率；V2X-Reg++ 的 `success@1m=63.3%` 作为无初值方法的对照线。
 
 | 目录 | 平移噪声 σ_t (m) | 旋转噪声 σ_r (°) | success@1m | success@2m | success@3m |
@@ -188,7 +188,7 @@
 - 运行命令示例：
   ```
   python benchmarks/run_vips_benchmark.py \
-      --config configs/pipeline_hkust.yaml \
+      --config configs/hkust/pipeline_hkust.yaml \
       --max-pairs 30 \
       --trans-noise 2.0 \
       --rot-noise-deg 10 \

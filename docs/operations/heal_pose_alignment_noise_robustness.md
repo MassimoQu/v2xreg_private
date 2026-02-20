@@ -22,8 +22,9 @@ HEAL/OpenCOOD 里经常同时讨论两件事：
 2) **外参求解/配准用的信息源（配准侧）**
    - *特征配准*：用密集 BEV “图”（occupancy/feature）先估一个相对位姿 seed/hint（再用于匹配或直接作为候选）。
    - *检测框配准*：只用检测框/几何匹配求外参（V2X-Reg++ 传统“后融合配准范式”）。
-   - 对应实现：V2X-Reg++ pose corrector 插在 dataset 内部（在 `pairwise_t_matrix` 计算前），见
-     `HEAL/opencood/data_utils/datasets/intermediate_fusion_dataset.py:401`。
+   - **新实现（当前主线）**：pose solver 在 dataset 外部运行（`HEAL/opencood/extrinsics/pose_correction/pose_solver.py` /
+     `HEAL/opencood/tools/inference_w_noise.py`），产出 pose override map；dataset 只负责注入 override，再计算
+     `pairwise_t_matrix`（`HEAL/opencood/utils/pose_utils.py:108`）。
 
 本文讨论的核心是：**配准侧**（特征 vs 框）得到的外参如何影响 **感知侧**（特征融合为主）的最终性能与鲁棒性。
 
@@ -69,7 +70,8 @@ HEAL/OpenCOOD 里经常同时讨论两件事：
      若要严格可比，可改为每个 noise level 都 `np.random.seed(fixed_seed)`（需要后续 patch）。
 
 5) **v2xregpp 的关键开关**
-   - `--pose-correction v2xregpp_initfree|v2xregpp_stable`：对应 dataset 内 pose corrector 的 `mode`（见第 3 节）。
+   - `--pose-correction v2xregpp_initfree|v2xregpp_stable`：触发 **外部 pose solver** 生成 override map；
+     `mode` 仍对应 stable/initfree（见第 3 节），但不再由 dataset 内部执行。
    - `--v2xregpp-occ-from-lidar`：从 raw lidar 生成 occupancy（绕开超大的 `stage1_boxes.json` occ 字段）。
    - `--v2xregpp-use-occ-hint / --v2xregpp-use-occ-pose / --v2xregpp-force-occ-pose`：控制 occ 的“hint/候选/强制”角色（第 3.2 节）。
    - 新增：`--v2xregpp-min-precision`：绝对精度阈值（对应 `Stage1V2XRegPPPoseCorrector.min_precision`），用于减少“0 噪声时被错误 override”的情况。
@@ -124,12 +126,14 @@ HEAL/OpenCOOD 里经常同时讨论两件事：
 
 ### 3.1 集成点：为什么它能影响协同感知
 
-V2X-Reg++ pose correction 是在 dataset 内改写 `lidar_pose`，从而影响后续 `pairwise_t_matrix`：
+当前实现中，**pose solver 与协同感知解耦**：solver 先离线/在线生成 override，dataset 再注入 `lidar_pose`。
 
-- 调用点（中融合 dataset）：`HEAL/opencood/data_utils/datasets/intermediate_fusion_dataset.py:401`
-- 生成 `pairwise_t_matrix`：`HEAL/opencood/utils/transformation_utils.py:21`
+- solver：`HEAL/opencood/extrinsics/pose_correction/pose_solver.py`
+- 入口：`HEAL/opencood/tools/inference_w_noise.py`（`--pose-correction` 会先跑 solver，再跑检测）
+- dataset 注入：`HEAL/opencood/utils/pose_utils.py:108`（`apply_pose_overrides`）
+- `pairwise_t_matrix` 生成：`HEAL/opencood/utils/transformation_utils.py:21`
 
-因此它影响的是“特征对齐矩阵”，而不是直接改网络。
+因此它依然影响“特征对齐矩阵”，但 **不再把求解算法塞在 dataset 内部**。
 
 ### 3.2 候选源：框匹配、occ-hint、occ-pose、ICP refine
 
@@ -430,7 +434,7 @@ HEAL 里一个典型例子是 PASTAT：
 
 2) **优先推进 occ/特征配准 + gating**
    - 在 0–10m/0–10° sweep 中，`occ_from_lidar` 明显能压平曲线（第 2.4 节）。
-   - 若只关心 0–10°，可以考虑把 occ yaw 搜索范围收紧到 10° 降低歧义（配置在 `configs/pipeline_midfusion_detection_occ.yaml:43`）。
+   - 若只关心 0–10°，可以考虑把 occ yaw 搜索范围收紧到 10° 降低歧义（配置在 `configs/dair/midfusion/pipeline_midfusion_detection_occ.yaml:43`）。
 
 3) **把“外参噪声鲁棒”分两层做**
    - 位姿层：更鲁棒/更不依赖 noisy pose 的外参估计（v2xregpp + occ + stable delta smooth）

@@ -47,7 +47,7 @@ Calibration Adapter
 ## 4. 标定模块适配
 
 ### 4.1 运行模式
-1. **离线批处理**：对齐 `configs/pipeline.yaml`，指定 detection cache 路径为 HEAL 导出的 JSON；用于验证精度收益。
+1. **离线批处理**：对齐 `configs/dair/pipeline.yaml`，指定 detection cache 路径为 HEAL 导出的 JSON；用于验证精度收益。
 2. **在线服务化**：
    - 将 `ObjectLevelPipeline` 封装为长驻进程（可选 FastAPI/gRPC）。
    - 输入：`{sample_id, infra_boxes, veh_boxes, poses}`。

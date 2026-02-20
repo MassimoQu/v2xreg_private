@@ -3,7 +3,7 @@
 ## 背景与目标
 - 校验 HEAL 官方发布的 stage-1 “单端”检测其实仍然共享一个多端模型的问题，重新训练真正的车端 / 路端 detector；
 - 导出新的 stage-1 检测框，构建符合 `calib.data.detection_adapter` 需求的 detection cache；
-- 用该 detection cache 运行 V2X-Reg++（`configs/pipeline_detection.yaml`），比较 Table III 所报告的检测输入精度，并分析差异。
+- 用该 detection cache 运行 V2X-Reg++（`configs/dair/detection/pipeline_detection.yaml`），比较 Table III 所报告的检测输入精度，并分析差异。
 
 ## 环境与配置
 - 机器：10× RTX 3090（24 GB），Ubuntu 22.04，NVIDIA 525.147，CUDA 12.0。
@@ -51,17 +51,17 @@
    ```bash
    python3 tools/make_data_info_subset.py  # 实际脚本：python3 - <<'PY' ...> data_info_detection1765.json
    ```
-   生成 `data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info_detection1765.json`（1765 条）。该 JSON 只包含真正拥有双端检测的帧，并保持原始顺序，供 `configs/pipeline_detection_subset*.yaml` 及 `configs/pipeline_gt_detection_subset.yaml` 使用。
+   生成 `data/DAIR-V2X/cooperative-vehicle-infrastructure/cooperative/data_info_detection1765.json`（1765 条）。该 JSON 只包含真正拥有双端检测的帧，并保持原始顺序，供 `configs/dair/detection/pipeline_detection_subset*.yaml` 及 `configs/dair/gt/pipeline_gt_detection_subset.yaml` 使用。
 
 ## V2X-Reg++ 推理
-- `configs/pipeline_detection.yaml` 关键配置：
+- `configs/dair/detection/pipeline_detection.yaml` 关键配置：
   - `data.use_detection=true`，`data.detection_cache=data/DAIR-V2X/detected/veh_rsu_dual_ft_detection_cache.json`；
   - `filters.top_k=25`（对每端保留 25 个最大体积目标），`priority_categories=[bus, truck, car]`；
   - `matching.strategy=['category','core']`、`matching.core_components=['centerpoint_distance','vertex_distance']`、`filter_threshold=4`；
   - `solver.stability_gate=3`。
 - 命令：
   ```bash
-  python tools/run_calibration.py --config configs/pipeline_detection.yaml
+  python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml
   ```
 - 为了避免缓存错配，`calib/data/detection_adapter.py` 已支持根据 `infra_frame_id/veh_frame_id` 精确检索检测记录（原逻辑只按 index 排序，遇到缺失帧会错位）。
 - 最终指标（1,800 帧）：
@@ -90,19 +90,19 @@
 3. 若后续单端 HEAL 检测达到论文指标，更新 `docs/operations/experiment_progress.md` & Table III 复现条目（当前 paper3737 的 PP/SC 已在其它配置上达标）。
 
 ## 2025-11-25 GT vs Detection (同帧) 结果
-- `configs/pipeline_gt_detection_subset.yaml`（GT、1765 帧）→ `outputs/heal_gt_single_subset/metrics.json`：
+- `configs/dair/gt/pipeline_gt_detection_subset.yaml`（GT、1765 帧）→ `outputs/heal_gt_single_subset/metrics.json`：
   - `success@1m=0.271`, `success@2m=0.439`, `frames_with_matches=1290`, `avg_time=0.042s`。
-- `configs/pipeline_detection_subset.yaml`（检测、1765 同帧）→ `outputs/heal_detection_single_subset/metrics.json`：
+- `configs/dair/detection/pipeline_detection_subset.yaml`（检测、1765 同帧）→ `outputs/heal_detection_single_subset/metrics.json`：
   - `success@1m=0.000`, `success@2m=0.0011`, `frames_with_matches=1392`, `avg_time=0.072s`。
 - 观察：虽然检测版本带来更多匹配（1392 vs 1290），但 SVD 几乎从未满足 1 m/2 m 成功条件，说明当前 PointPillars 检测质量不足，且严格匹配门限直接把所有候选淘汰。
 
 ## 阈值放宽实验
-- `configs/pipeline_detection_subset_relaxed.yaml` 把 `filter_threshold` 降为 3、距离阈值 +0.2 m，结果 `outputs/heal_detection_single_subset_relaxed/metrics.json`：
+- `configs/dair/detection/pipeline_detection_subset_relaxed.yaml` 把 `filter_threshold` 降为 3、距离阈值 +0.2 m，结果 `outputs/heal_detection_single_subset_relaxed/metrics.json`：
   - `frames_with_matches=1428`（+36），`success@2m=0.00057`（仍≈0），`avg_time=0.070s`。
 - 说明当前检测误差主要来自框中心/朝向的系统性偏差——即使放宽距离门限，SVD 也难以输出满足 2 m 的结果；要提升成功率必须先提升检测精度。
 
 ## 1800 帧基线
-- `configs/pipeline_detection.yaml`（检测、原 1800 帧）→ `outputs/heal_detection_single/metrics.json`: `success@1m=0.0056`, `success@2m=0.0106`, `avg_time=0.069s`。
+- `configs/dair/detection/pipeline_detection.yaml`（检测、原 1800 帧）→ `outputs/heal_detection_single/metrics.json`: `success@1m=0.0056`, `success@2m=0.0106`, `avg_time=0.069s`。
 - 历史 GT 结果（`outputs/heal_detection_single_prev/metrics.json`）= 0.271/0.440；差距完全来自检测盒而非 pipeline 设定。
 
 ## 其它备注

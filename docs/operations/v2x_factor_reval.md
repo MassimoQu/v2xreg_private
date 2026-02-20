@@ -2,7 +2,7 @@
 
 _Date:_ 2025-11-25  
 _Environment:_ Python 3.10 (micromamba `v2x` env), `tools/run_calibration.py`, DAIR-V2X cooperative split (`max_samples=30`).  
-_Default config:_ `configs/pipeline_hkust.yaml` (V2X-Reg++, oDist) unless noted.
+_Default config:_ `configs/hkust/pipeline_hkust.yaml` (V2X-Reg++, oDist) unless noted.
 
 All raw metrics live under `outputs/factor_sweeps/` (JSON summaries) and `outputs/v2*/` (per-run `metrics.json`, `matches.jsonl`).
 
@@ -12,11 +12,11 @@ Command:
 
 ```bash
 PYTHONPATH=. micromamba run -n v2x python tools/covisibility_sweep.py \
-  --config configs/pipeline_hkust.yaml \
+  --config configs/hkust/pipeline_hkust.yaml \
   --limits 1,2,3,4,5,7,10,12,15,18,20,25,30,40,50,70,80,100,inf \
   --tag-prefix v2xregpp_cov          # oDist
 PYTHONPATH=. micromamba run -n v2x python tools/covisibility_sweep.py \
-  --config configs/pipeline_hkust.yaml \
+  --config configs/hkust/pipeline_hkust.yaml \
   --limits 1,2,3,4,5,7,10,12,15 \
   --core-components iou \
   --tag-prefix v2icalib_cov_low      # oIoU
@@ -232,7 +232,7 @@ This list can be cross-checked against DAIR metadata to verify scene variety.
 
 ## 9. Reproducing V2X-Reg++ vs V2I-Calib on the representative subset
 
-Configs: `configs/pipeline_hkust_representative.yaml` (oDist) and `configs/pipeline_hkust_representative_oiou.yaml` (oIoU). Both keep the paper’s `top_k=10`, GT boxes, and weighted SVD; only the data_info path changes.
+Configs: `configs/hkust/pipeline_hkust_representative.yaml` (oDist) and `configs/hkust/pipeline_hkust_representative_oiou.yaml` (oIoU). Both keep the paper’s `top_k=10`, GT boxes, and weighted SVD; only the data_info path changes.
 
 | Method | success@1 m | success@2 m | Avg time (s) | Avg matches | Output |
 | --- | --- | --- | --- | --- | --- |

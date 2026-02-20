@@ -31,7 +31,7 @@
 3. **Calibration data ingestion:**
    - Enhance `calib/data/detection_adapter.py` to parse dict objects (`{'type': 'feature', 'corners': ..., 'score': ...}`) and to expose `get(..., field='feature_corner3d_np_list')`.
    - Add feature-specific knobs to `DatasetManager` (choose GT/detection/feature source).
-   - Create/modify pipeline configs (e.g., `configs/pipeline_features.yaml`) with feature-friendly filter priorities and distance thresholds.
+   - Create/modify pipeline configs (e.g., `configs/dair/misc/pipeline_features.yaml`) with feature-friendly filter priorities and distance thresholds.
 4. **Verification:**
    - Export a dual-agent stage-1 run with feature dumps.
    - Convert to detection/feature caches.
@@ -87,13 +87,13 @@ Each milestone will capture commands, intermediate artefacts, and observations i
    - `calib/data/interfaces.py`: `CalibrationSample` now carries `features_infra` / `features_vehicle`.
    - `calib/data/dataset_manager.py`: keeps a dedicated `DetectionAdapter` for feature caches and forwards both detections and features to callers.
    - `calib/pipelines/object_level.py`: selects feature boxes whenever `data.use_features=true`, falling back to detections or GT otherwise.
-   - New config `configs/pipeline_features.yaml` (feature cache path, `filters.top_k=15`, `matching.distance_thresholds.feature=1.0`, `output.tag=heal_features_smoke`).
+   - New config `configs/dair/misc/pipeline_features.yaml` (feature cache path, `filters.top_k=15`, `matching.distance_thresholds.feature=1.0`, `output.tag=heal_features_smoke`).
 
 ### 4.2 Smoke-test run
 
 Command:
 ```bash
-python tools/run_calibration.py --config configs/pipeline_features.yaml --print
+python tools/run_calibration.py --config configs/dair/misc/pipeline_features.yaml --print
 ```
 
 Cache: `data/DAIR-V2X/detected/heal_stage1_dual_feature_cache.json` (10 frames, 64 features/agent, filtered to top-15 in `FilterPipeline`).  
@@ -190,8 +190,8 @@ python tools/heal_stage1_to_detection_cache.py \
 
 ### 6.3 Calibration 烟测
 
-- `configs/pipeline_features.yaml` → `use_detection=false`，`feature_cache=data/DAIR-V2X/detected/heal_stage1_dual_bev_cache.json`，`filters.top_k=20`，`distance_thresholds.feature=1.0`，输出目录 `outputs/heal_features_bev_smoke/`。  
-- `python tools/run_calibration.py --config configs/pipeline_features.yaml --print`
+- `configs/dair/misc/pipeline_features.yaml` → `use_detection=false`，`feature_cache=data/DAIR-V2X/detected/heal_stage1_dual_bev_cache.json`，`filters.top_k=20`，`distance_thresholds.feature=1.0`，输出目录 `outputs/heal_features_bev_smoke/`。  
+- `python tools/run_calibration.py --config configs/dair/misc/pipeline_features.yaml --print`
 
 结果（5 帧 pilot）：
 
@@ -248,13 +248,13 @@ python tools/heal_stage1_to_detection_cache.py \
 
 2. **Descriptor-only 匹配测试**（初期将 features+detections 合并后完全依赖 descriptor OT，失败）
    ```bash
-   python tools/run_calibration.py --config configs/pipeline_features.yaml --print
+   python tools/run_calibration.py --config configs/dair/misc/pipeline_features.yaml --print
    # matching.strategy = ['descriptor_only'], descriptor_min_similarity=0.7
    ```
 
 3. **回退到 detection-only（带 descriptor）**  
    ```bash
-   python tools/run_calibration.py --config configs/pipeline_features.yaml --print
+   python tools/run_calibration.py --config configs/dair/misc/pipeline_features.yaml --print
    # matching.strategy = ['core', 'descriptor'], use_features=false, use_detection=true
    ```
 

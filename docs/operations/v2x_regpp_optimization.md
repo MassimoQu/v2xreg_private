@@ -2,7 +2,7 @@
 
 *Last updated: 2025-11-23 12:25 UTC*  
 Dataset: DAIR-V2X cooperative vehicle–infrastructure subset (`max_samples=30`, GT boxes unless noted).  
-Baseline config: `configs/pipeline_hkust.yaml`.
+Baseline config: `configs/hkust/pipeline_hkust.yaml`.
 
 ## Plan
 1. Reconfirm V2X-Reg++ baseline metrics on the HKUST/DAIR subset to establish a reference.
@@ -17,7 +17,7 @@ Baseline config: `configs/pipeline_hkust.yaml`.
 **Goal.** Validate the repo state reproduces the reported `success@1m=63.3%` on the 30-frame DAIR subset, ensuring subsequent comparisons are apples-to-apples.  
 **Command.**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust.yaml --print
 ```
 **Result.**
 
@@ -38,7 +38,7 @@ python tools/run_calibration.py --config configs/pipeline_hkust.yaml --print
 **Goal.** Evaluate the built-in KD-tree parallelism path (`matching.parallel_flag=true`, `matching.corresponding_parallel=true`) to see if we get free latency reduction.  
 **Command.**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust_parallel.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_parallel.yaml --print
 ```
 **Result.**
 
@@ -58,7 +58,7 @@ python tools/run_calibration.py --config configs/pipeline_hkust_parallel.yaml --
 **Goal.** Keep the Hungarian solver identical to baseline while still using the multiprocessing pool to evaluate candidate pairs. This sets `matching.parallel_flag=true` but leaves `matching.corresponding_parallel=false`.  
 **Command.**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust_parallel_pool.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_parallel_pool.yaml --print
 ```
 **Result.**
 
@@ -80,7 +80,7 @@ python tools/run_calibration.py --config configs/pipeline_hkust_parallel_pool.ya
 - `calib/config.FilterConfig` now carries `min_confidence` (float) and `per_category_top_k` (dict), both optional.
 - `calib/filters/pipeline.FilterPipeline` applies the new knobs in order: distance → confidence → per-category quota (with fallback fill) → global `top_k`.
 
-**GT result (`configs/pipeline_hkust_balanced.yaml`).**
+**GT result (`configs/hkust/pipeline_hkust_balanced.yaml`).**
 
 | Metric | Value |
 | --- | --- |
@@ -105,9 +105,9 @@ python tools/run_calibration.py --config configs/pipeline_hkust_parallel_pool.ya
 **Commands.**
 ```bash
 # Lenient prior reuse
-python tools/run_calibration.py --config configs/pipeline_hkust_temporal.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_temporal.yaml --print
 # Conservative prior reuse
-python tools/run_calibration.py --config configs/pipeline_hkust_temporal6.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_temporal6.yaml --print
 ```
 **Result.**
 
@@ -131,7 +131,7 @@ from calib.config import load_config
 from calib.data.dataset_manager import DatasetManager
 from v2x_calib.utils import get_xyz_from_bbox3d_8_3
 
-cfg = load_config('configs/pipeline_detection_subset.yaml')
+cfg = load_config('configs/dair/detection/pipeline_detection_subset.yaml')
 dataset = DatasetManager(cfg.data)
 thresholds=[0.5,1.0,2.0]
 counts={(agent,thr):0 for agent in ['infra','veh'] for thr in thresholds}
@@ -180,11 +180,11 @@ PY
 **Goal.** Remove obviously invalid detection boxes (cones, ghost pillars) using geometric bounds, without retraining HEAL.  
 **Code changes.**
 - `FilterConfig` gains `size_bounds`; `FilterPipeline` now drops boxes whose L/W/H fall outside the per-category (or default) range via `get_lwh_from_bbox3d_8_3`.
-- Added `configs/pipeline_detection_size.yaml` with `2.5 m ≤ length ≤ 12 m`, `1.2 m ≤ width ≤ 4 m`, `1.2 m ≤ height ≤ 4.5 m` for the default (`detected`) category on the same 120-frame subset.
+- Added `configs/dair/detection/pipeline_detection_size.yaml` with `2.5 m ≤ length ≤ 12 m`, `1.2 m ≤ width ≤ 4 m`, `1.2 m ≤ height ≤ 4.5 m` for the default (`detected`) category on the same 120-frame subset.
 
 **Command.**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_detection_size.yaml --print
+python tools/run_calibration.py --config configs/dair/detection/pipeline_detection_size.yaml --print
 ```
 **Result.**
 
@@ -212,7 +212,7 @@ The solver stack enforces correspondences before calling SVD:
 **Command.**
 ```bash
 # retain only the highest-scoring match via filter_strategy=topRetained
-python tools/run_calibration.py --config configs/pipeline_hkust_singlematch.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_singlematch.yaml --print
 ```
 **Result.**
 
@@ -257,11 +257,11 @@ Next steps for this theme:
 **Code change.** Added `data.shuffle_box_vertices` to `DataConfig`/`DatasetManager`. When enabled, we copy each BBox3d and permute its `bbox3d_8_3` with a fixed reverse order (`[7,6,5,4,3,2,1,0]`). Defaults keep the original behaviour; a dedicated config can target either side. See:
 - `calib/config.py:10-32` – new `shuffle_box_vertices` field.
 - `calib/data/dataset_manager.py:1-70` – helper that shuffles infra/veh/detection/feature boxes when requested.
-- `configs/pipeline_hkust_vertexshuffle.yaml` – enables `data.shuffle_box_vertices: {vehicle: true}` so only the vehicle boxes have their vertices reversed.
+- `configs/hkust/pipeline_hkust_vertexshuffle.yaml` – enables `data.shuffle_box_vertices: {vehicle: true}` so only the vehicle boxes have their vertices reversed.
 
 **Command.**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust_vertexshuffle.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_vertexshuffle.yaml --print
 ```
 **Result.**
 
@@ -298,7 +298,7 @@ prints `frames with matches=19`, `true_success=0`, `avg_TE≈87.6m`.
 
 **Command (baseline).**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust.yaml --print
 ```
 **Result.**
 ```
@@ -310,7 +310,7 @@ So 3 frames solved via fallback/no-match; the remaining 16 frame successes at 1�
 
 **Detection subset.**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_detection_subset.yaml --print
+python tools/run_calibration.py --config configs/dair/detection/pipeline_detection_subset.yaml --print
 ```
 **Result.**
 ```
@@ -322,7 +322,7 @@ This immediately reveals the earlier “20 % success” number is entirely mad
 
 **Vertex shuffle (Exp.8 config).**
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust_vertexshuffle.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_vertexshuffle.yaml --print
 ```
 **Result.**
 ```
@@ -339,7 +339,7 @@ Again, the matches-aware metric drops to 0, confirming all apparent successes we
 
 To confirm the failure in Experiment 8 stems from **mismatched** vertex ordering (not the permutation itself), I ran:
 ```bash
-python tools/run_calibration.py --config configs/pipeline_hkust_vertexshuffle_both.yaml --print
+python tools/run_calibration.py --config configs/hkust/pipeline_hkust_vertexshuffle_both.yaml --print
 ```
 This shuffles vertices on both infra and vehicle boxes using the same permutation. Results:
 ```

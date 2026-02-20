@@ -19,11 +19,11 @@
 
 | Scope | Why it is safe | Pointers / Notes |
 | --- | --- | --- |
-| **DAIR-V2X Table III (GT sweeps)** | Success@1 m/2 m curves (GT10–GT∞) in `docs/operations/experiment_progress.md:5-23` match the manuscript ordering (oDist > oIoU; smaller `top_k` improves both accuracy and runtime). These use the exact configs shipped in `configs/pipeline*.yaml`, so we can cite them confidently. | Keep `outputs/dair_v2xregpp_gt*` runs and mention `tools/run_calibration.py --config configs/pipeline.yaml`. |
+| **DAIR-V2X Table III (GT sweeps)** | Success@1 m/2 m curves (GT10–GT∞) in `docs/operations/experiment_progress.md:5-23` match the manuscript ordering (oDist > oIoU; smaller `top_k` improves both accuracy and runtime). These use the exact configs shipped under `configs/` (see `configs/README.md`), so we can cite them confidently. | Keep `outputs/dair_v2xregpp_gt*` runs and mention `tools/run_calibration.py --config configs/dair/pipeline.yaml`. |
 | **SVD variants (w/m/h)** | The relative ranking (wSVD≻mSVD≻hSVD) supports the analytical section of the paper, reinforcing that solver choice matters. Metrics fall within previously reported ranges. | Keep `outputs/dair_v2xregpp_gt25_*`. |
 | **oIoU baseline** | Shows expected degradation vs. oDist while highlighting latency issues; matches the “legacy vs. new pipeline” storyline. | Keep `outputs/dair_v2xreg_oiou_gt15`. |
 | **V2X-Set synthetic figures (Fig. 6/8/9)** | JSON exports (`outputs/v2xset_*`) remain faithful to the figure captions and do not expose unreported failures. Visualization script already filters/scales them appropriately. | Safe to reference in README/docs. |
-| **HKUST benchmark scripts** | Runs align with the public LiDAR benchmark; no contradictory metrics noted. | Keep `configs/pipeline_hkust*.yaml` & associated logs. |
+| **HKUST benchmark scripts** | Runs align with the public LiDAR benchmark; no contradictory metrics noted. | Keep `configs/hkust/pipeline_hkust*.yaml` & associated logs. |
 
 **Recommendation:** Highlight only the above experiments in README + docs. Provide their commands and note that other configs are WIP.
 
