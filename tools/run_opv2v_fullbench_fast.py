@@ -243,6 +243,8 @@ def build_tasks(
     deterministic_strict: bool,
     online_gpu_stage1_solver: bool,
     online_skip_pairwise_rebuild: bool,
+    lidar_reg_cache_dir: Optional[Path],
+    require_lidar_reg_cache: bool,
     methods: Sequence[str],
     include_baseline: bool,
     include_oracle: bool,
@@ -262,6 +264,18 @@ def build_tasks(
         key = build_task_key(modality, sweep, method, strategy, noise)
         log_path = log_dir / task_log_name(modality, sweep, method, strategy, noise)
         tasks.append(Task(key=key, cmd=cmd, log_path=log_path))
+
+    def _lidar_reg_global_method(meta: dict) -> str:
+        extra = meta.get("extra_args") or []
+        for item in extra:
+            if not isinstance(item, str):
+                continue
+            if item.strip().startswith("--lidar-reg-global-method"):
+                toks = item.strip().split()
+                if len(toks) >= 2:
+                    return str(toks[1]).strip()
+        # Matches inference_w_noise default (when global_method==auto and use_fgr=False).
+        return "ransac"
 
     modality_specs = {
         "camera": (camera_model, camera_stage1),
@@ -315,6 +329,13 @@ def build_tasks(
                     if meta.get("family") == "v2xregpp":
                         args.append(f"--v2xregpp-config {v2xregpp_config}")
                     args.extend(meta.get("extra_args", []))
+                    if lidar_reg_cache_dir and str(meta.get("initfree", "")).startswith("lidar_reg"):
+                        gm = _lidar_reg_global_method(meta)
+                        cache_path = (Path(lidar_reg_cache_dir) / f"opv2v_test_{gm}.json").resolve()
+                        if require_lidar_reg_cache and not cache_path.exists():
+                            raise SystemExit(f"[PRECHECK] Missing lidar-reg cache: {cache_path}")
+                        if cache_path.exists():
+                            args.append(f"--lidar-reg-cache {cache_path}")
                     cmd = build_cmd(python_bin, common + [" ".join(args)])
                     add_task(modality, sweep, method_name, "best", noise, cmd)
 
@@ -326,6 +347,13 @@ def build_tasks(
                     if meta.get("family") == "v2xregpp":
                         args.append(f"--v2xregpp-config {v2xregpp_config}")
                     args.extend(meta.get("extra_args", []))
+                    if lidar_reg_cache_dir and str(meta.get("initfree", "")).startswith("lidar_reg"):
+                        gm = _lidar_reg_global_method(meta)
+                        cache_path = (Path(lidar_reg_cache_dir) / f"opv2v_test_{gm}.json").resolve()
+                        if require_lidar_reg_cache and not cache_path.exists():
+                            raise SystemExit(f"[PRECHECK] Missing lidar-reg cache: {cache_path}")
+                        if cache_path.exists():
+                            args.append(f"--lidar-reg-cache {cache_path}")
                     cmd = build_cmd(python_bin, common + [" ".join(args)])
                     add_task(modality, sweep, method_name, "stable", noise, cmd)
 
@@ -462,6 +490,8 @@ def write_config_snapshot(out_dir: Path, args: argparse.Namespace, noise_list: S
         "deterministic_strict": bool(getattr(args, "deterministic_strict", False)),
         "online_gpu_stage1_solver": bool(getattr(args, "online_gpu_stage1_solver", False)),
         "online_skip_pairwise_rebuild": bool(getattr(args, "online_skip_pairwise_rebuild", False)),
+        "lidar_reg_cache_dir": str(getattr(args, "lidar_reg_cache_dir", "") or ""),
+        "require_lidar_reg_cache": bool(getattr(args, "require_lidar_reg_cache", False)),
         "methods": parse_list(getattr(args, "methods", "")),
         "skip_baseline": bool(getattr(args, "skip_baseline", False)),
         "skip_oracle": bool(getattr(args, "skip_oracle", False)),
@@ -794,6 +824,17 @@ def main():
         help="Forward --online-skip-pairwise-rebuild to inference_w_noise.py (useful for oracle parity checks).",
     )
     parser.add_argument(
+        "--lidar-reg-cache-dir",
+        type=Path,
+        default=None,
+        help="Optional directory containing precomputed OPV2V test caches for lidar_reg/hkust methods (files: opv2v_test_<global_method>.json).",
+    )
+    parser.add_argument(
+        "--require-lidar-reg-cache",
+        action="store_true",
+        help="Fail preflight if a lidar_reg/hkust method is requested but its cache file is missing.",
+    )
+    parser.add_argument(
         "--allow-pose-override",
         action="store_true",
         help="Allow pose_override.enabled=true,mode=zero in model config (use for explicit no-extrinsics suites).",
@@ -890,6 +931,8 @@ def main():
         deterministic_strict=bool(getattr(args, "deterministic_strict", False)),
         online_gpu_stage1_solver=bool(getattr(args, "online_gpu_stage1_solver", False)),
         online_skip_pairwise_rebuild=bool(getattr(args, "online_skip_pairwise_rebuild", False)),
+        lidar_reg_cache_dir=args.lidar_reg_cache_dir,
+        require_lidar_reg_cache=bool(args.require_lidar_reg_cache),
         methods=methods,
         include_baseline=include_baseline,
         include_oracle=include_oracle,
