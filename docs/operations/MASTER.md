@@ -1,4 +1,4 @@
-# V2XReg Private Worktree — Master Index (2026-02-23)
+# V2XReg Private Worktree — Master Index (2026-02-24)
 
 这份仓库是一个“研究 + 复现 + 工程落地”的私有工作树：目标不是只跑出一两个数，而是把
 **协同感知 AP** 与 **配准质量** 在 **DAIR / OPV2V** 上用统一口径打通，最后得到可复核的结论与产物。
@@ -69,6 +69,10 @@
 
 （对应实现入口：`tools/run_opv2v_fullbench_fast.py`）
 
+另一个必须冻结/核验的信号是 **方法是否真的生效**：
+- 对需要真正 apply pose update 的方法线，必须检查 `pose_provider_applied_count>0`；
+  如果全为 0，则该方法线在该条件下等价 **no-op（=baseline）**，常见成因是 payload 未注入或安全门限直接拒绝 apply。
+
 ---
 
 ## 4) 当前已收敛的结论（以可追溯产物为准）
@@ -91,7 +95,7 @@ imagematch（camera raw image matching）：
 
 1. **在 OPV2V 上重新跑一版完全统一条件的 fullbench**
    - 统一 python env / git commit / comm-range gating
-   - 以最新方法版本为准（尤其 lidar_reg 的 T 修复、imagematch online payload）
+   - 以最新方法版本为准（尤其 lidar_reg 的 T 修复、imagematch online payload、以及 lidar_reg 运行时 raw points 导出不再依赖 `visualize`）
 
 2. **刷新全矩阵长表与统一出图**
    - `tools/summarize_opv2v_fullbench_from_yaml.py`
@@ -99,4 +103,3 @@ imagematch（camera raw image matching）：
 
 3. **DAIR 补齐同口径矩阵（把 HKUST/with-init 也拼到下游 AP）**
    - 目前 DAIR canonical 仍以 core methods 为主；扩展线需要单独补跑并并入 fullmatrix 输出口径。
-

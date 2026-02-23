@@ -143,6 +143,9 @@
 - online runtime 的 imagematch payload（camera_data/intrinsic/extrinsic 注入）
 - online runtime 的 lidar_reg per-CAV raw LiDAR payload（`lidar_np_by_cav` 导出）
 - lidar_reg 的相对位姿方向（T）修复
+- （2026-02-24）进一步修复：将 `lidar_np_by_cav` 导出语义从 `visualize` 解耦，
+  当 `pose_provider.enabled && online_method==lidar_reg` 时即使 `visualize=False` 也会导出，
+  避免某些脚本（如 `inference.py`/`eval_calibfree_align.py`）在默认 `visualize=False` 下 silent no-op。
 
 因此：
 - append 中早期开跑/已完成的 imagematch 与部分 lidar_reg/hkust 任务属于“旧代码版本结果”，不应直接并入最终 fullmatrix 结论；
@@ -157,6 +160,8 @@
   且 `match_sec` 极小（典型 no-op / payload 未就绪特征）。例如（同一个点 n=1.0）：
   - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_lidarreg_ransac_best_n1.0.yaml`
   - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_hkust_teaser_best_n1.0.yaml`
+  其中一种常见成因是：运行时 batch 未携带 per-CAV raw points（`lidar_np_by_cav`），
+  导致 online `lidar_reg` corrector 无法组装 `base_data_dict[*].lidar_np` 而直接返回不 apply。
 
 ### 新的统一合同与 smoke
 

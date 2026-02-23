@@ -94,6 +94,9 @@ G6 Effectiveness: PASS (smoke evidence)
 - lidar_reg：在统一 smoke 下 `pose_provider_applied_count>0`（说明 online lidar payload wiring 生效）：
   - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_unified_smoke_20260223_fix1_lidar_noise10_lidarreg_ransac_best_n1.0.yaml`
   - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_unified_smoke_20260223_fix1_lidar_noise10_hkust_teaser_best_n1.0.yaml`
+  - 备注：full run 需要保证 runtime batch 携带 per-CAV raw points（`lidar_np_by_cav`）。
+    2026-02-24 起 dataloader 已将该 payload 导出语义从 `visualize` 解耦：当 `pose_provider.enabled && online_method==lidar_reg` 时即使 `visualize=False` 也会导出，
+    以避免脚本默认 `visualize=False` 时的 silent no-op。
 
 G7 Source-of-Truth: PASS
 - completion：`run_state.jsonl`

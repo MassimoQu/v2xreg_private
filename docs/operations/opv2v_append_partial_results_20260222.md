@@ -32,6 +32,10 @@ This note snapshots the *current* (partial) results for the OPV2V append sweep t
   - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_lidarreg_ransac_best_n1.0.yaml`
   - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_hkust_teaser_best_n1.0.yaml`
   - 两者在该点上 `ap50=0.595188...`、`rel_trans_m.mean=1.223692...`、`match_sec≈7e-4`。
+  - 进一步说明（机制层面）：当 runtime batch 未携带 per-CAV raw points（`lidar_np_by_cav`）时，
+    online `lidar_reg` corrector 无法组装 `base_data_dict[*].lidar_np`，会直接返回不 apply（silent no-op）。
+    另外在部分脚本（默认 `visualize=False`）里，历史版本的 dataloader 曾把 `lidar_np_by_cav` 导出绑定到 `visualize`，
+    这也会导致同样的 no-op；该点已在 2026-02-24 解耦修复（以最新 commit 为准）。
 
 因此：**本文件中“imagematch AP 很高”的表格只保留为历史现象，不应作为最终对比结论。**
 
