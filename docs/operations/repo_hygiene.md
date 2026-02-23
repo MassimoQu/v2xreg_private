@@ -71,3 +71,12 @@ Typical failures it should prevent:
 - dirty submodules left uncommitted,
 - large untracked files you forgot to document.
 
+## 5) Benchmark Provenance (Non-Negotiable for Canonical Numbers)
+
+For any OPV2V/DAIR run that you intend to cite as “latest / canonical”, make sure the run directory
+contains a `config_snapshot.json` with:
+- `git_commit`, `git_branch`, `git_dirty`
+- `heal_commit`, `heal_branch`, `heal_dirty`
+
+Rule of thumb:
+- `git_dirty=true` => treat the run as **debug/provisional**, not a fair benchmark line.

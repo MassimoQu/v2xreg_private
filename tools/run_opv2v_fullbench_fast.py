@@ -181,6 +181,7 @@ def build_common_args(
     solver_backend: str,
     runtime_mode: str,
     pose_source: str,
+    comm_range_gating: str,
     max_eval_samples: Optional[int],
     deterministic_strict: bool,
     online_gpu_stage1_solver: bool,
@@ -200,6 +201,10 @@ def build_common_args(
         f"--solver-backend {solver_backend}",
         f"--pose-source {pose_source}",
     ]
+    # Freeze comm-range semantics across all methods to avoid confounds where
+    # pose-correction implicitly toggles clean-vs-noisy gating in inference_w_noise.py.
+    if comm_range_gating and str(comm_range_gating).strip().lower() != "auto":
+        args.append(f"--comm-range-gating {comm_range_gating}")
     if deterministic_strict:
         args.append("--deterministic-strict")
     if online_gpu_stage1_solver:
@@ -233,6 +238,7 @@ def build_tasks(
     solver_backend: str,
     runtime_mode: str,
     pose_source: str,
+    comm_range_gating: str,
     max_eval_samples: Optional[int],
     deterministic_strict: bool,
     online_gpu_stage1_solver: bool,
@@ -280,6 +286,7 @@ def build_tasks(
                     solver_backend=solver_backend,
                     runtime_mode=runtime_mode,
                     pose_source=pose_source,
+                    comm_range_gating=comm_range_gating,
                     max_eval_samples=max_eval_samples,
                     deterministic_strict=deterministic_strict,
                     online_gpu_stage1_solver=online_gpu_stage1_solver,
@@ -338,6 +345,8 @@ def build_tasks(
                 f"--solver-backend {solver_backend}",
                 f"--pose-source {pose_source}",
             ]
+            if comm_range_gating and str(comm_range_gating).strip().lower() != "auto":
+                common.append(f"--comm-range-gating {comm_range_gating}")
             if deterministic_strict:
                 common.append("--deterministic-strict")
             if online_gpu_stage1_solver:
@@ -449,6 +458,7 @@ def write_config_snapshot(out_dir: Path, args: argparse.Namespace, noise_list: S
         "solver_backend": str(getattr(args, "solver_backend", "offline_map")),
         "runtime_mode": str(getattr(args, "runtime_mode", "")),
         "pose_source": str(getattr(args, "pose_source", "noisy_input")),
+        "comm_range_gating": str(getattr(args, "comm_range_gating", "auto")),
         "deterministic_strict": bool(getattr(args, "deterministic_strict", False)),
         "online_gpu_stage1_solver": bool(getattr(args, "online_gpu_stage1_solver", False)),
         "online_skip_pairwise_rebuild": bool(getattr(args, "online_skip_pairwise_rebuild", False)),
@@ -457,6 +467,37 @@ def write_config_snapshot(out_dir: Path, args: argparse.Namespace, noise_list: S
         "skip_oracle": bool(getattr(args, "skip_oracle", False)),
         "skip_single": bool(getattr(args, "skip_single", False)),
     }
+    # Include git provenance for evidence-grade comparisons.
+    try:
+        cfg["git_commit"] = (
+            subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+        )
+        cfg["git_branch"] = (
+            subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+        )
+        cfg["git_dirty"] = bool(
+            subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain=v1"], text=True).strip()
+        )
+    except Exception:
+        pass
+    try:
+        heal_root = ROOT / HEAL
+        if (heal_root / ".git").exists():
+            cfg["heal_commit"] = (
+                subprocess.check_output(["git", "-C", str(heal_root), "rev-parse", "HEAD"], text=True).strip()
+            )
+            cfg["heal_branch"] = (
+                subprocess.check_output(["git", "-C", str(heal_root), "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+            )
+            cfg["heal_dirty"] = bool(
+                subprocess.check_output(["git", "-C", str(heal_root), "status", "--porcelain=v1"], text=True).strip()
+            )
+    except Exception:
+        pass
+    try:
+        cfg["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
     (out_dir / "config_snapshot.json").write_text(json.dumps(cfg, indent=2))
 
 
@@ -731,6 +772,13 @@ def main():
         help="Pose source for runtime fusion-only mode.",
     )
     parser.add_argument(
+        "--comm-range-gating",
+        type=str,
+        default="auto",
+        choices=["auto", "clean", "noisy"],
+        help="Freeze comm-range pruning semantics in inference_w_noise.py (recommended to avoid cross-method confounds).",
+    )
+    parser.add_argument(
         "--deterministic-strict",
         action="store_true",
         help="Forward --deterministic-strict to inference_w_noise.py for stricter parity runs.",
@@ -837,6 +885,7 @@ def main():
         solver_backend=args.solver_backend,
         runtime_mode=args.runtime_mode,
         pose_source=args.pose_source,
+        comm_range_gating=args.comm_range_gating,
         max_eval_samples=args.max_eval_samples if int(args.max_eval_samples) > 0 else None,
         deterministic_strict=bool(getattr(args, "deterministic_strict", False)),
         online_gpu_stage1_solver=bool(getattr(args, "online_gpu_stage1_solver", False)),

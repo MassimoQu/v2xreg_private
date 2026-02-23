@@ -75,6 +75,11 @@
   - semantics: `config_snapshot.json`
 - 聚合表：`outputs/benchmark_unified_20260220/opv2v_dual_suite_ap_reg.csv`
 
+更新（2026-02-23）：
+- `inference_w_noise.py` 在 online runtime 下会隐式切换 `comm_range_use_clean_pose`，导致 baseline 与 pose-correction 方法可能处于不同 gating 语义。
+  为避免 cross-method confound，后续 fullbench 应显式传入 `--comm-range-gating {clean|noisy}` 并写入 `config_snapshot.json`。
+  对应调度器已补齐参数与 git provenance：`tools/run_opv2v_fullbench_fast.py`。
+
 ### 2.3 DAIR Table III（注册主表）
 - 统一 gate: `te_re`。
 - 报告源：`docs/operations/table3_paper3737_repro_status.md`

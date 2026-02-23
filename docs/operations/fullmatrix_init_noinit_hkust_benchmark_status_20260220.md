@@ -119,3 +119,37 @@
 
 按你的要求尝试了 subagent 并行编排，但当前环境下子代理被 Landlock 限制阻断（无法读仓库）。
 因此本轮改为主代理直接并行推进：代码扩展 + 长跑任务启动 + 统一报告脚本落地。
+
+---
+
+## Update（2026-02-23）
+
+### 当前队列（OPV2V append）在跑什么
+
+正在运行的 append 调度进程（本机）：
+- `tools/run_opv2v_fullbench_fast.py`（run_id=`opv2v_autopilot_full_20260216_auto3_a1`，methods=`vips_prior/cbm_prior/imagematch_*/lidarreg_ransac/hkust_*`）
+
+以 `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/run_state.jsonl` 为准，
+当前 append scope（400 tasks）状态为：
+- done_in_scope=166
+- in_progress=30
+- pending=204
+
+### 重要风险：mid-run 代码修复导致“同一 run_id 下混版本”
+
+在 append 长跑过程中，HEAL 子模块新增/修复了：
+- online runtime 的 imagematch payload（camera_data/intrinsic/extrinsic 注入）
+- lidar_reg 的相对位姿方向（T）修复
+
+因此：
+- append 中早期开跑/已完成的 imagematch 与部分 lidar_reg/hkust 任务属于“旧代码版本结果”，不应直接并入最终 fullmatrix 结论；
+- 需要在 **git clean + 统一 comm-range gating** 的条件下重新启动一版 unified run（见下一条）。
+
+### 新的统一合同与 smoke
+
+已落地的统一条件调度能力：
+- `tools/run_opv2v_fullbench_fast.py` 新增 `--comm-range-gating` 并在 `config_snapshot.json` 写入 git/heal commit。
+
+已启动 smoke（用于验证机制与产物链路）：
+- `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/`
+- 合同与 preflight 记录：`docs/operations/opv2v_unified_fullbench_plan_20260223.md`
