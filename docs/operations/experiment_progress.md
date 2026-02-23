@@ -101,7 +101,7 @@
 | HEAL detection vs GT（同 1765 帧） | `det`: 0.000 / `gt`: 0.271 | `det`: 0.0011 / `gt`: 0.439 | `outputs/heal_detection_single_subset/metrics.json` vs `outputs/heal_gt_single_subset/metrics.json` |
 | HEAL detection relaxed gates（1765 帧） | 0.000 | 0.00057 | `outputs/heal_detection_single_subset_relaxed/metrics.json` |
 | BEV descriptor smoke (`configs/dair/misc/pipeline_features.yaml`) | 0.565 | 0.739 | 输出 `outputs/20251123-223008/metrics.json`，`frames_with_matches=1919` |
-| PP/SC 检测（test split） | 运行中 | 运行中 | `configs/dair/detection/pipeline_detection_pp.yaml` / `configs/dair/detection/pipeline_detection_sc.yaml`，`max_samples=1800`，待写入 `outputs/dair_v2xregpp_{pp,sc}15_test/metrics.json` |
+| PP/SC 检测（test split，已完成） | PP: 0.1912 / SC: 0.1889（TE@1m） | PP: 0.3684 / SC: 0.3712（TE@2m） | `configs/dair/detection/pipeline_detection_pp.yaml` / `configs/dair/detection/pipeline_detection_sc.yaml`；结果见 `outputs/dair_v2xregpp_pp15_test/metrics.json` 与 `outputs/dair_v2xregpp_sc15_test/metrics.json`。注意同批 jsonl 在 `te_re` 口径下分别为 PP@1/2/3=0.0961/0.3046/0.4164、SC@1/2/3=0.0945/0.3074/0.4120。 |
 
 **分析**  
 - HEAL 检测结果与 `docs/operations/heal_detection_status.md` 记录一致：成功率 ~19% 受匹配质量制约，需要更好的 RSU 模型。  
@@ -306,7 +306,7 @@ AP@0.5（pos_std=0..4，对应 rot_std=0..4）：
 ## 7. 未完成 / 下一步
 
 1. **ICP / PICP baseline**：已完成（见上方 §5 的 paper3737 全量 sweep）。  
-2. **检测 Test split**：`configs/dair/detection/pipeline_detection_pp.yaml` / `configs/dair/detection/pipeline_detection_sc.yaml` 正在跑 1800 帧以复现 Table III 的 PP/SC 行；完成后将把 `metrics.json` 数字写回此表。  
+2. **检测 Test split**：已完成（1789 帧）。TE 口径：PP@1/2/3=`0.1912/0.3684/0.4528`，SC@1/2/3=`0.1889/0.3712/0.4494`；对应 `te_re` 重算：PP@1/2/3=`0.0961/0.3046/0.4164`，SC@1/2/3=`0.0945/0.3074/0.4120`。产物：`outputs/dair_v2xregpp_pp15_test/`、`outputs/dair_v2xregpp_sc15_test/`。  
 3. **GPU 相关任务**：由于服务器 GPU 掉线，`opencood/tools/pose_graph_pre_calc.py --dump_bev_features` 未能完成；若后续要导出 HEAL BEV 特征，需先恢复 GPU 或将脚本改为 CPU 模式（极慢）。  
 4. **匹配器加速记录（2025-11-24）**  
    - 组件：`legacy/v2x_calib/corresponding/BoxesMatch.py`、`similarity_utils.py`。  

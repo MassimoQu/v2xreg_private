@@ -12,10 +12,22 @@ Plan docs（规范来源）：
   - `outputs/benchmark_manifest_20260209_real_runtime_gate.json`  
   - `outputs/benchmark_gate_report_20260209_real_runtime_gate.md`  
   - `outputs/benchmark_results_20260209_real_runtime_gate.jsonl`
+- 更新（2026-02-20）：核心 box 方法（`v2xregpp/freealign/vips/cbm`）全 GPU 化后复跑 gate（用户同意 T03 AP 阈值放宽到 `1e-3`）  
+  - manifest：`outputs/benchmark_manifest_20260220_fullgpu_gate.json`
+  - gate report：`outputs/benchmark_gate_report_20260220_fullgpu_gate.md`
+  - gate report rerun（同输入、重跑测试）：`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun.md`
+  - gate report rerun2（fresh OPV2V smoke-based T06）：`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md`
+  - gate report rerun3（updated test suite + `AP<=1e-3` default）：`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun3.md`
+  - T06 rows：`outputs/gate_fullgpu_t06_rows_20260220.jsonl`（4 行，`bad_fallback=[]`）
+  - T06 rows rerun2：`outputs/gate_fullgpu_t06_rows_20260220_recheck.jsonl`（4 行，`bad_fallback=[]`）
+- 更新（2026-02-20）：`online_box_feat_refine` 路径落地并完成 gate  
+  - manifest：`outputs/benchmark_manifest_20260220_fullgpu_featrefine_gate.json`
+  - gate report：`outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md`
+  - T06 rows：`outputs/gate_fullgpu_featrefine_t06_rows_20260220_recheck.jsonl`（4 行，`bad_fallback=[]`，`refine_applied_total=4`）
 - 严格 oracle parity（offline_map vs online_box, 100 samples）：`outputs/strict_oracle_online_parity_20260209.json`
-- 更新（2026-02-18）：oracle parity 复跑（仍 FAIL，但 oracle 路径已实现 `cpu_fallback_count==0`）  
+- 更新（2026-02-18）：oracle parity 复跑（在旧 `1e-4` 口径 FAIL，但 oracle 路径已实现 `cpu_fallback_count==0`）  
   - strict parity JSON：`outputs/strict_oracle_online_parity_20260218_fastpath.json`
-- OPV2V fullbench（online_box）实际 CPU fallback 证据（例 1 条 YAML）：  
+- OPV2V fullbench（online_box）历史 CPU fallback 证据（已被 2026-02-20 gate 修复覆盖，保留用于追溯）：  
   - `HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_v2xregpp_initfree_opv2v_autopilot_full_20260216_auto3_a1_camera_noise10_v2xregpp_best_n1.0.yaml`
 
 ---
@@ -24,24 +36,19 @@ Plan docs（规范来源）：
 
 结论分两种（因为 playbook 本身就是“双轨策略”）：
 
-1) **Track R（可发布 benchmark reference lane）**：**BLOCK**  
-   - 原因：严格 oracle parity 仍未满足 hard gate（AP delta 超阈值），因此 **不能把 online_box / 全 GPU 路径晋升为 reference**。
-2) **Track G（加速/全 GPU 研发 lane）**：**ALLOW（继续推进）**  
-   - 原因：runtime 合同测试 + proxy gate（T00-T10 的 real_runtime_gate）已 PASS，说明基础设施可用；但仍需补齐 promotion gate。
+1) **Track R（当前执行口径）**：**PASS**  
+   - 口径：AP parity `<=1e-3` + pose parity `<=1e-3`。  
+   - 证据：`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md`（T00-T10 全 PASS）。
+2) **Track G（加速/全 GPU 研发 lane）**：**PASS（核心方法 + feat_refine 均达成全 GPU）**  
+   - 证据：`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md`（online_box）与 `outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md`（online_box_feat_refine）均全绿。
+3) **阈值收口**：`1e-4 -> 1e-3` 已执行  
+   - 含义：旧 `1e-4` 结果仅作历史参考，不再作为当前阻断 gate。
 
 ---
 
-## P0 阻塞项（阻止“宣称全 GPU 已完成 / 晋升为 Track R”）
+## P0 阻塞项（当前执行口径）
 
-1) **严格 oracle offline_map vs online_box parity 未过 hard gate**  
-   - 证据（旧）：`outputs/strict_oracle_online_parity_20260209.json` 里 `ap_pass=false`，且 `max_ap_abs_delta=2.934e-4 > 1e-4`。
-   - 证据（新，2026-02-18）：`outputs/strict_oracle_online_parity_20260218_fastpath.json` 里 `ap_pass=false`，`max_ap_abs_delta=5.420e-4 > 1e-4`，但 `online_pose_timing.cpu_fallback_count=0.0`（oracle online 路径无 CPU fallback）。
-2) **主线 OPV2V online/fullbench 仍出现 CPU fallback（不是 strict all-GPU hot path）**  
-   - 证据：  
-     - `HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_v2xregpp_initfree_opv2v_autopilot_full_20260216_auto3_a1_camera_noise10_v2xregpp_best_n1.0.yaml`  
-     - `timing_stats[0].pose_timing.cpu_fallback_count == 1.0`
-3) **`online_box_feat_refine` 仍未形成“可验收”的 refine 行为**（当前实现上等价走 `online_box`）  
-   - 证据：`HEAL/opencood/utils/pose_provider_runtime.py` 对 `solver_backend in {"online_box","online_box_feat_refine"}` 走同一路径（没有独立 refine gate/计时字段）；仓库内无独立 refine 模块文件。
+无。
 
 ---
 
@@ -51,19 +58,18 @@ T00-T10（proxy gate，证明 runtime 基础设施可跑、可测、可审计）
 - 证据：`outputs/benchmark_gate_report_20260209_real_runtime_gate.md`：`overall_status: PASS`，且 T00..T10 全 PASS。
 - 含义：工具链/契约/证据三件套是通的（但这不是“严格晋升条件”）。
 
-严格 oracle parity（promotion hard gate）— **FAIL**
+严格 oracle parity（按当前 `1e-3` 口径）— **PASS**
 - 证据：  
-  - `outputs/strict_oracle_online_parity_20260209.json`：`ap_pass=false`。  
-  - `outputs/strict_oracle_online_parity_20260218_fastpath.json`：`ap_pass=false`（oracle online 路径 `cpu_fallback_count==0` 但 AP gate 仍未过）。
-- 含义：**不能晋升 Track G -> Track R**（否则 benchmark 语义漂移风险不可控）。
+  - `outputs/strict_oracle_online_parity_20260209.json`：`max_ap_abs_delta=2.934e-4 < 1e-3`。  
+  - `outputs/strict_oracle_online_parity_20260218_fastpath.json`：`max_ap_abs_delta=5.420e-4 < 1e-3`，且 `cpu_fallback_count==0`。
+- 含义：在当前阈值配置下，不再阻断晋升。
 
-GPU residency（“热路径无 CPU fallback”）— **PARTIAL**
-- PASS 证据（小样本）：`outputs/gate_real_t06_rows.jsonl`：`cpu_fallback_count: 0.0`（job_id=`real_online_gpu20`）。  
-- FAIL 证据（主线 fullbench）：见上方 OPV2V YAML，`cpu_fallback_count: 1.0`。  
-- 含义：GPU 化路径存在且能跑到 0 fallback，但 **尚未变成主线默认/可复现**。
+GPU residency（“热路径无 CPU fallback”）— **PASS（核心方法）**
+- 证据：`outputs/gate_fullgpu_t06_rows_20260220.jsonl`：4 行（`v2xregpp/freealign/vips/cbm`）`cpu_fallback_count` 均为 0。  
+- 含义：在当前主线核心方法集合下，hot path 已可复现为无强制 CPU fallback。
 
-无初值 + 特征 refine（目标态 L2）— **NOT DONE（按计划定义）**
-- 证据：`docs/operations/heal_noinit_online_heter_fusion_design.md` 明确将 `online_feature_refiner.py` 标注为 open milestone；代码侧未见独立 refine 实现产物。
+无初值 + 特征 refine（目标态 L2）— **DONE（runtime 落地 + gate 通过）**
+- 证据：`HEAL/opencood/extrinsics/pose_correction/online_feature_refiner.py` 已落地，`HEAL/opencood/utils/pose_provider_runtime.py` 已接入 `online_box_feat_refine` 并输出 `refine_sec/refine_attempted_count/refine_applied_count`；`outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md` T06 PASS。
 
 ---
 
@@ -73,13 +79,13 @@ GPU residency（“热路径无 CPU fallback”）— **PARTIAL**
 -> runtime 合同、测试、manifest/gate/results 证据闭环已具备  
 -> 风险：该 gate 是 proxy（DAIR-val-max20），不能替代 strict promotion gate
 
-2) `strict_oracle_online_parity_20260209.json` AP hard gate FAIL  
--> online_box 的语义仍与 offline_map 存在可测 AP 漂移  
--> 风险：若直接在论文/主 benchmark 中替换 reference，会把“加速改造造成的漂移”误当成算法增益/退化
+2) `strict_oracle_online_parity_20260209.json` / `...20260218_fastpath.json` 的 AP delta 均小于 `1e-3`  
+-> 当前阈值下，online_box 与 offline_map 可视为可接受语义近似  
+-> 风险：若未来切回 `1e-4`，该项会重新变成阻断
 
-3) OPV2V fullbench YAML 出现 `cpu_fallback_count==1`  
--> 主线 benchmark 仍非 strict all-GPU hot path  
--> 风险：你要的“全 GPU 在线端到端 benchmark”目前只能算 **partial**（需要把 fallback=0 变成可验收条款）
+3) `outputs/gate_fullgpu_t06_rows_20260220_recheck.jsonl` 与 `outputs/gate_fullgpu_featrefine_t06_rows_20260220_recheck.jsonl` 均为 `cpu_fallback_count==0`  
+-> online_box 与 online_box_feat_refine 两条主线都已可复现无强制 CPU fallback  
+-> 风险：新增方法/新分支仍可能引入 fallback，需要继续按 T06 审计
 
 ---
 
@@ -87,15 +93,19 @@ GPU residency（“热路径无 CPU fallback”）— **PARTIAL**
 
 1) 把 promotion gate 变成“每次跑分自动生成”的硬产物：  
    - 每次 candidate（全 GPU）跑完，必须输出一份 strict parity JSON（像 `outputs/strict_oracle_online_parity_20260209.json` 这种）。
-2) 将 `cpu_fallback_count==0` 升级为 OPV2V online/fullbench 的验收项（否则不要叫“全 GPU”）。  
-3) 若要推进 `online_box_feat_refine`：先补齐“refine 生效证据”（独立 timing 字段 + 可控开关 + ablation 通过），再谈收益。
+2) 将 `cpu_fallback_count==0` 继续保留为 OPV2V online/fullbench 的硬验收项（新增方法必须先过 T06）。  
+3) 下一步重点从“实现完成”切到“收益验证”：在 DAIR/OPV2V fullbench 上做 refine ablation（AP/pose/吞吐三维）。
 
 ---
 
 ## 复跑验收条件（晋升 Track G -> Track R 的最低要求）
 
-必须同时满足：
-- strict oracle parity：`max_ap_abs_delta <= 1e-4` 且 `pose_delta <= 1e-3`
+必须同时满足（当前执行口径）：
+- strict oracle parity：`max_ap_abs_delta <= 1e-3` 且 `pose_delta <= 1e-3`
 - GPU residency：在 OPV2V fullbench 代表性任务上 `cpu_fallback_count == 0`
 - fairness：非 oracle 路径无 GT 泄漏（T04 类规则）
 - provenance：manifest + gate_report + results 三件套齐全且可追溯到同一协议（同 split/同 ckpt/同后处理/同 eval 范围）
+
+用户当前执行口径（2026-02-20）：
+- T03/T02 AP 阈值统一为 `1e-3`；
+- 对应证据：`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md` 与 `outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md`（均 T00-T10 全 PASS）。

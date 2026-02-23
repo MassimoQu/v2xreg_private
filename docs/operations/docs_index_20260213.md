@@ -24,6 +24,14 @@
   - OPV2V benchmark 复现流程（环境/缓存/运行方式）。
 - `docs/operations/benchmark_execution_status_20260219.md`
   - 最近一次 benchmark 执行状态（完成证据链 + 关键结果）。
+- `docs/operations/config_experiment_map_20260220.md`
+  - 配置簇 -> 实验目的 -> 最新结果 的统一索引。
+- `docs/operations/unified_benchmark_contract_and_comparison_20260220.md`
+  - 统一条件下的 AP+配准主对比（含覆盖校验与有/无初值分组）。
+- `docs/operations/fullmatrix_init_noinit_hkust_benchmark_status_20260220.md`
+  - 全矩阵（有初值/无初值/HKUST）补跑与统一出图执行状态。
+- `docs/operations/opv2v_append_partial_results_20260222.md`
+  - OPV2V append（init/no-init/HKUST）阶段性结果 + 关键 sanity checks（含 env 混用提示）。
 - `docs/operations/experiment_progress.md`  
   - 大型实验进度汇总（较长，含历史结果与偏差分析）。
 - `docs/operations/heal_pose_fusion_execution_playbook.md`  
@@ -34,7 +42,6 @@
 ## 未审阅（仅列出文件名）
 
 - `docs/operations/_debug_head200_ap50.png`
-- `docs/operations/benchmark_inventory.md`
 - `docs/operations/code_inventory.md`
 - `docs/operations/dataset_adaptation_non_invasive.md`
 - `docs/operations/experiment_reproduction.md`

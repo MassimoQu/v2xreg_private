@@ -62,12 +62,88 @@ METHODS = {
         "family": "generic",
         "extra_args": [],
     },
+    "vips_noprior": {
+        "initfree": "vips_initfree",
+        "stable": "vips_stable",
+        "needs_stage1": True,
+        "family": "generic",
+        "extra_args": [],
+    },
+    "vips_prior": {
+        "initfree": "vips_initfree",
+        "stable": "vips_stable",
+        "needs_stage1": True,
+        "family": "generic",
+        "extra_args": ["--vips-use-prior"],
+    },
     "cbm": {
         "initfree": "cbm_initfree",
         "stable": "cbm_stable",
         "needs_stage1": True,
         "family": "generic",
         "extra_args": [],
+    },
+    "cbm_noprior": {
+        "initfree": "cbm_initfree",
+        "stable": "cbm_stable",
+        "needs_stage1": True,
+        "family": "generic",
+        "extra_args": [],
+    },
+    "cbm_prior": {
+        "initfree": "cbm_initfree",
+        "stable": "cbm_stable",
+        "needs_stage1": True,
+        "family": "generic",
+        "extra_args": ["--cbm-use-prior"],
+    },
+    "imagematch_noinit": {
+        "initfree": "image_match_initfree",
+        "stable": "image_match_stable",
+        "needs_stage1": False,
+        "family": "generic",
+        "extra_args": ["--image-match-init-source none"],
+        "supported_modalities": ("camera",),
+    },
+    "imagematch_current": {
+        "initfree": "image_match_initfree",
+        "stable": "image_match_stable",
+        "needs_stage1": False,
+        "family": "generic",
+        "extra_args": ["--image-match-init-source current"],
+        "supported_modalities": ("camera",),
+    },
+    "lidarreg_ransac": {
+        "initfree": "lidar_reg_initfree",
+        "stable": "lidar_reg_stable",
+        "needs_stage1": False,
+        "family": "generic",
+        "extra_args": ["--lidar-reg-global-method ransac"],
+        "supported_modalities": ("lidar",),
+    },
+    "hkust_teaser": {
+        "initfree": "lidar_reg_initfree",
+        "stable": "lidar_reg_stable",
+        "needs_stage1": False,
+        "family": "generic",
+        "extra_args": ["--lidar-reg-global-method teaser_gnctls"],
+        "supported_modalities": ("lidar",),
+    },
+    "hkust_fgr": {
+        "initfree": "lidar_reg_initfree",
+        "stable": "lidar_reg_stable",
+        "needs_stage1": False,
+        "family": "generic",
+        "extra_args": ["--lidar-reg-global-method teaser_fgr"],
+        "supported_modalities": ("lidar",),
+    },
+    "hkust_quatro": {
+        "initfree": "lidar_reg_initfree",
+        "stable": "lidar_reg_stable",
+        "needs_stage1": False,
+        "family": "generic",
+        "extra_args": ["--lidar-reg-global-method teaser_quatro"],
+        "supported_modalities": ("lidar",),
     },
 }
 
@@ -221,6 +297,9 @@ def build_tasks(
 
                 for method_name in methods:
                     meta = METHODS[method_name]
+                    supported_modalities = tuple(meta.get("supported_modalities") or ())
+                    if supported_modalities and modality not in supported_modalities:
+                        continue
                     # best-of
                     note = f"_{run_id}_{modality}_{sweep}_{method_name}_best_n{noise}"
                     args = [f"--pose-correction {meta[initfree]}", "--pose-compare-current", f"--note {note}"]

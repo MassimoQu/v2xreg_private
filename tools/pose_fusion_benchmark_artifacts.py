@@ -1106,8 +1106,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_gate.add_argument("--t02-provider")
     p_gate.add_argument("--t03-offline")
     p_gate.add_argument("--t03-online")
-    p_gate.add_argument("--t02-ap-threshold", type=float, default=1e-4)
-    p_gate.add_argument("--t03-ap-threshold", type=float, default=1e-4)
+    p_gate.add_argument("--t02-ap-threshold", type=float, default=1e-3)
+    p_gate.add_argument("--t03-ap-threshold", type=float, default=1e-3)
     p_gate.add_argument("--t03-pose-threshold", type=float, default=1e-3)
     p_gate.add_argument(
         "--audit-glob",

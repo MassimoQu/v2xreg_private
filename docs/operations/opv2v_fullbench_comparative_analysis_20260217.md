@@ -74,6 +74,7 @@ Last updated: 2026-02-17
 - unique_tasks_started: 404
 - unique_tasks_ended: 404
 - final_end_codes: {0: 404}
+- （2026-02-20 更新）camera `v2xregpp_occhint` append 后同 run_id 统计为 444/444/code0=444；核心 cross-modal scope 仍是 404。
 
 这条链路是“任务级别事实”，比任何 log grep 都可靠。
 

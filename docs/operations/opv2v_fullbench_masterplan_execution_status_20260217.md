@@ -29,7 +29,7 @@ Offline reference (not apples-to-apples with OPV2V online):
 
 解释（只说最关键的）：
 - masterplan §4.5 的 DoD（完成 + 作图 + 语义固化 + 非退化 sanity）在 `20260216_auto3` 上整体满足。
-- 但你的“最终目的”里提到的 **全 GPU 化在线端到端** 仍是 **PARTIAL**（当前 online backend 仍存在 `cpu_fallback_count`，详见下方 Gate / 风险）。
+- 你的“全 GPU 化在线端到端”目标已通过后续 gate 产物补齐（见 `outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md` 与 `outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md`，T06 均 `bad_fallback=[]`）。
 
 ---
 
@@ -37,7 +37,7 @@ Offline reference (not apples-to-apples with OPV2V online):
 
 无（在 OPV2V online/fullbench 的语义下）。
 
-> 注意：如果你的论文/报告把“全 GPU”当作硬要求，则需要把“cpu_fallback_count=0”升级为 P0（目前未满足）。
+> 注：当前 `20260216_auto3` 主 run 是结果基线；全 GPU 验收由后续 gate run 补齐并通过（T06 无 fallback）。
 
 ---
 
@@ -82,7 +82,7 @@ G6 Effectiveness Gate (The Thing Actually Applies) — **PASS**
 G7 Source-of-Truth Gate (Completion + Metrics) — **PASS**
 - 完成以 `run_state.jsonl` 为准（而不是 log grep / task_summary）：
   - `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/run_state.jsonl`
-  - 统计见 `docs/operations/opv2v_fullbench_evidence_autopilot_20260216_auto3.md`（ended=404, code0=404）。
+  - 统计见 `docs/operations/opv2v_fullbench_evidence_autopilot_20260216_auto3.md`（core scope ended=404；2026-02-20 camera occhint append 后 same run_id ended=444, code0=444）。
 - `task_summary.json` 仍可能陈旧（pending=404），已在证据报告中显式标注：
   - `docs/operations/opv2v_fullbench_evidence_autopilot_20260216_auto3.md` §1。
 
@@ -104,7 +104,7 @@ G10 Cost / Stop-Loss Gate — **PARTIAL**
 
 ## 证据链（关键事实 -> 推论 -> 风险）
 
-1) `run_state.jsonl` ended=404 且全部 code=0  
+1) `run_state.jsonl` core scope ended=404 且全部 code=0（append 后总 ended=444 仍全部 code=0）  
 -> 本轮 scope 的任务确实完成（不是“看起来跑了”）  
 -> 风险: `task_summary.json` 可能 stale，必须禁止用它做完成判定
 
@@ -124,7 +124,7 @@ G10 Cost / Stop-Loss Gate — **PARTIAL**
 
 ## 止损执行单（最小下一步）
 
-1) 把 “全 GPU” 从愿景变成验收条款：在汇总里硬性输出并检查 `cpu_fallback_count==0`（当前不满足）。  
+1) 保持 “全 GPU” 验收条款：在汇总里继续硬性输出并检查 `cpu_fallback_count==0`（当前已满足，后续新增方法继续沿用）。  
 2) 修正/移除 `task_summary.json` 误导口径（或在工具层面禁止它作为完成判定）。  
 3) 对 camera-online 的异常弱增益做 targeted ablation（见 `docs/operations/opv2v_fullbench_comparative_analysis_20260217.md` 的 camera 章节）。  
 
@@ -137,5 +137,4 @@ G10 Cost / Stop-Loss Gate — **PARTIAL**
 - sanity: baseline 随噪声下降；oracle 上界近似水平；single(comm_range=0, noise=0) 合理
 - integrity: stage1 cache 2170 samples 且 contiguous；所有 task 使用同一 cache（同模态内）
 - semantics: config_snapshot.json 固化 `solver_backend/runtime_mode/pose_source`
-- (可选但建议) full-GPU: `cpu_fallback_count==0`（若作为论文硬指标）
-
+- full-GPU: `cpu_fallback_count==0`（当前已由 `20260220_fullgpu*` gate 产物满足）

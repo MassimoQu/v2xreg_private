@@ -1,6 +1,6 @@
 # Benchmark Inventory & Hygiene
 
-Last updated: 2026-02-17
+Last updated: 2026-02-20
 
 This document consolidates all benchmark artifacts that currently exist in the repo,
 classifies them as **canonical (fair/official)** or **non‑canonical (partial/legacy)**,
@@ -36,6 +36,9 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
   - comm_range_override=100
   - baseline + oracle + single_comm0 included
   - Same stage1 cache per modality across methods
+- **Latest DAIR noise10 refresh (same scope):**
+  - `outputs/pose_sweep_1to10_full_gpuvoxel20260218_results.jsonl`
+  - Unified AP+pose table: `outputs/benchmark_unified_20260220/dair_noise10_ap_reg.csv`
 
 
 ## Non‑Canonical / Partial Benchmarks (Do Not Mix With Canonical)
@@ -74,7 +77,7 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
 - **Artifacts:** `outputs/hparam_search_results.jsonl`
 
 
-## In‑Progress Benchmarks (Not Yet Comparable)
+## OPV2V Canonical Benchmark
 
 ### F) OPV2V Full Benchmark (OPV2V, online/fullbench)
 - **Status:** complete, canonical
@@ -91,7 +94,9 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
   - Comparative analysis: `docs/operations/opv2v_fullbench_comparative_analysis_20260217.md`
 - **Notes / caveats:**
   - For completion, **do not** trust `task_summary.json` (can be stale); use `run_state.jsonl` instead.
-  - "All‑GPU end‑to‑end" is still a separate milestone (online backend can hit CPU fallback).
+  - Current `run_state.jsonl` includes post-append camera `v2xregpp_occhint` tasks; core cross-modal scope remains complete.
+  - "All‑GPU end‑to‑end" core lanes are now covered by gate artifacts (`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md`, `outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md`), both with T06 `bad_fallback=[]`.
+  - Unified AP+pose table: `outputs/benchmark_unified_20260220/opv2v_dual_suite_ap_reg.csv`
 
 
 ## How to Compare (Recommended)
@@ -100,9 +105,20 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
 2) **Do not mix** per‑CAV stage1 results (Section C) with canonical runs.  
 3) **Do not compare** fast/partial sweeps (Section B) against full sweeps.  
 4) **OPV2V** should be compared only after AP values are validated.
+5) For unified cross-dataset comparisons, use:
+   - `docs/operations/unified_benchmark_contract_and_comparison_20260220.md`
+   - `outputs/benchmark_unified_20260220/coverage_checks.json`
+   - `outputs/benchmark_fullmatrix_20260220/combined_noise_curve_long.csv`
+   - `outputs/benchmark_fullmatrix_20260220/plots/`
 
 
 ## TODO (to make the catalog complete)
 - (Done) Finish OPV2V full benchmark and validate AP correctness.
-- Add a lightweight “benchmark manifest” per run (dataset, split, stage1, model, noise lists).
-- Add a unified plotting script that enforces color/linestyle conventions.
+- (Done) Add lightweight unified manifest/tables for DAIR + OPV2V:
+  - `outputs/benchmark_unified_20260220/*.csv`
+  - `outputs/benchmark_unified_20260220/coverage_checks.json`
+- (Done) Add a unified full-matrix plotting/report script with fixed color/linestyle conventions:
+  - `tools/build_fullmatrix_benchmark_report.py`
+  - `outputs/benchmark_fullmatrix_20260220/*`
+- Continue full-condition append runs for with-init / HKUST downstream AP lines:
+  - `docs/operations/fullmatrix_init_noinit_hkust_benchmark_status_20260220.md`

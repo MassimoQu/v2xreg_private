@@ -1,6 +1,7 @@
 # HEAL 无初值在线配准 + 异构协同融合一体化设计草案
 
 Update Log (append new entries at top):
+- 2026-02-20 (v1.1): Landed `online_feature_refiner.py` and connected `online_box_feat_refine` runtime path. Added refine timing output (`refine_sec`, `refine_attempted_count`, `refine_applied_count`) and smoke evidence in gate artifacts.
 - 2026-02-09 (v1.0): Marked `online_box_solver.py` as landed (integrated in runtime as opt-in `gpu_stage1_solver` path with unit check). Kept `online_feature_refiner.py` as open milestone and clarified current parity risk.
 - 2026-02-08 (v0.9): De-duplicated with execution playbook. Trimmed Section 4 to algorithm-only constraints and moved order/gates/rollback details to `heal_pose_fusion_execution_playbook.md`.
 - 2026-02-08 (v0.8): Synced with doc split. Kept this file algorithm-focused and moved execution/cutover procedures to `heal_pose_fusion_execution_playbook.md`; added boundary notes for easier doc management.
@@ -223,8 +224,8 @@ fusion:
 - 已提供检测框无初值求解张量 API，并在 `pose_provider_runtime` 里以 `online_args.gpu_stage1_solver=true` 方式接入。
 - 当前默认关闭（未过 parity gate 前不替换 reference lane）。
 
-3) `HEAL/opencood/extrinsics/pose_correction/online_feature_refiner.py`（新，规划中，当前仓库尚未落地）
-- 封装 feature-level SE(2) refinement（可微 warp + 小步优化）。
+3) `HEAL/opencood/extrinsics/pose_correction/online_feature_refiner.py`（已落地）
+- 封装 feature-level SE(2) local refinement（GPU 张量局部搜索 + 小步优化）。
 
 4) `HEAL/opencood/models/heter_model_baseline.py`
 - 明确导出 per-agent 单端检测输出与 BEV feature 句柄，避免二次前向。
@@ -286,7 +287,7 @@ fusion:
 
 ## 11. 验收矩阵（v0.9）
 
-- A1 在线一致性：`online_box` 相对 `offline_map`，AP30/50/70 差异 `<= 1e-4`。
+- A1 在线一致性：`online_box` 相对 `offline_map`，AP30/50/70 差异 `<= 1e-3`（当前执行口径）。
 - A2 姿态一致性：中位平移/偏航误差差异 `<= 1e-3`。
 - A3 稳定性收益：`feature_refine` 相比仅 `box_noinit`，在 1m~10m sweep 上 median jitter 不恶化，且 AP50 不下降。
 - A4 公平性：`single_only` / `fusion_only` / `register_only` / `register_and_fuse` 共用同一 detector 权重、同一检测范围、同一后处理参数（`register_only` 允许不产出融合检测，但前向与阈值配置必须一致）。
