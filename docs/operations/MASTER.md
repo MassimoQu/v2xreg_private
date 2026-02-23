@@ -8,6 +8,7 @@
 - **统一对比主报告（DAIR+OPV2V+Table III）**：`docs/operations/unified_benchmark_contract_and_comparison_20260220.md`
 - **全矩阵（有初值/无初值/HKUST）补跑状态**：`docs/operations/fullmatrix_init_noinit_hkust_benchmark_status_20260220.md`
 - **imagematch 断档领先排查（远端统一条件）**：`docs/operations/imagematch_initfree_remote_audit_20260223.md`
+- **lidarreg/hkust no-op 退化根因 + 复跑判定**：`docs/operations/lidarreg_noop_root_cause_and_rerun_20260224.md`
 
 ---
 

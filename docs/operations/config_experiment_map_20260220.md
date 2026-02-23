@@ -20,7 +20,7 @@
 | Camera detection 系列 | `configs/camera/det/*` | 评估纯相机检测框可否支撑稳定注册 | `outputs/camera_det_*` 系列 | 当前仍远弱于 lidar 线 |
 | Midfusion + occ-hint | `configs/dair/midfusion/*`, `docs/operations/v2xregpp_midfusion_occ_hint.md` | 验证 occ-hint 是否改善配准/融合 | `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1` (camera occhint append) | camera 有小幅正增益，但尚不足以改变主结论 |
 | HKUST/V2I-CALIB 对照 | `configs/hkust/*`, `configs/paper3737/hkust/*` | 对齐第三方基线与本仓路线的公平比较 | `outputs/hkust_teaser/*` | 时间/精度口径仍未完全对齐，需继续收敛 |
-| 全矩阵有/无初值 + HKUST 下游拼跑 | `tools/run_opv2v_fullbench_fast.py`, `tools/build_fullmatrix_benchmark_report.py` | 在统一条件下把 with-init/no-init/HKUST 方法与协同感知 AP+配准打通 | `outputs/benchmark_fullmatrix_20260220/*`, `docs/operations/fullmatrix_init_noinit_hkust_benchmark_status_20260220.md` | 已落地统一长表与出图；full-condition 补跑进行中 |
+| 全矩阵有/无初值 + HKUST 下游拼跑 | `tools/run_opv2v_fullbench_fast.py`, `tools/build_fullmatrix_benchmark_report.py` | 在统一条件下把 with-init/no-init/HKUST 方法与协同感知 AP+配准打通 | `outputs/benchmark_fullmatrix_20260220/*`, `docs/operations/fullmatrix_init_noinit_hkust_benchmark_status_20260220.md`, `docs/operations/lidarreg_noop_root_cause_and_rerun_20260224.md` | 已落地统一长表与出图；full-condition 补跑进行中 |
 
 ---
 
