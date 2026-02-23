@@ -206,7 +206,15 @@ def _parse_opv2v_filename(path, run_id):
 
 def _parse_opv2v_rel_stats(run_dir, run_id):
     cfg = json.loads((run_dir / "config_snapshot.json").read_text(encoding="utf-8"))
-    model_dirs = [Path(cfg["camera_model"]), Path(cfg["lidar_model"])]
+    model_dirs = []
+    for key in ("camera_model", "lidar_model"):
+        raw = cfg.get(key)
+        if not raw:
+            continue
+        p = Path(str(raw))
+        if not p.is_absolute():
+            p = (ROOT / p).resolve()
+        model_dirs.append(p)
 
     rel_map = {}
     for model_dir in model_dirs:
@@ -243,6 +251,11 @@ def _parse_opv2v_rel_stats(run_dir, run_id):
                 ps = ts0.get("pose_solver")
                 if isinstance(ps, dict) and pose_applied is None:
                     pose_applied = ps.get("applied")
+            try:
+                source = str(path.resolve().relative_to(ROOT))
+            except Exception:
+                source = str(path)
+
             rec = {
                 "mean_rel_trans_m": float(rel_t) if rel_t is not None else None,
                 "mean_rel_yaw_deg": float(rel_y) if rel_y is not None else None,
@@ -250,7 +263,7 @@ def _parse_opv2v_rel_stats(run_dir, run_id):
                 "pose_applied_count": float(pose_applied) if pose_applied is not None else None,
                 "pose_match_sec": float(match_sec) if match_sec is not None else None,
                 "pose_provider_total_sec": float(pose_provider_total_sec) if pose_provider_total_sec is not None else None,
-                "source": str(path.relative_to(ROOT)),
+                "source": source,
                 "mtime": path.stat().st_mtime,
             }
             old = rel_map.get(key)
