@@ -227,10 +227,29 @@ def _parse_opv2v_rel_stats(run_dir, run_id):
             rel_t = (entry0.get("rel_trans_m") or {}).get("mean") if isinstance(entry0, dict) else None
             rel_y = (entry0.get("rel_yaw_deg") or {}).get("mean") if isinstance(entry0, dict) else None
             succ2 = (entry0.get("rel_success_at_m") or {}).get("2") if isinstance(entry0, dict) else None
+
+            # Pose provider effectiveness / timing (optional, schema changed over time).
+            pose_applied = None
+            match_sec = None
+            pose_provider_total_sec = None
+            ts_list = obj.get("timing_stats") or []
+            ts0 = ts_list[0] if isinstance(ts_list, list) and ts_list else {}
+            if isinstance(ts0, dict):
+                pt = ts0.get("pose_timing")
+                if isinstance(pt, dict):
+                    pose_applied = pt.get("pose_provider_applied_count")
+                    match_sec = pt.get("match_sec")
+                    pose_provider_total_sec = pt.get("pose_provider_total_sec")
+                ps = ts0.get("pose_solver")
+                if isinstance(ps, dict) and pose_applied is None:
+                    pose_applied = ps.get("applied")
             rec = {
                 "mean_rel_trans_m": float(rel_t) if rel_t is not None else None,
                 "mean_rel_yaw_deg": float(rel_y) if rel_y is not None else None,
                 "success_at_2m": float(succ2) if succ2 is not None else None,
+                "pose_applied_count": float(pose_applied) if pose_applied is not None else None,
+                "pose_match_sec": float(match_sec) if match_sec is not None else None,
+                "pose_provider_total_sec": float(pose_provider_total_sec) if pose_provider_total_sec is not None else None,
                 "source": str(path.relative_to(ROOT)),
                 "mtime": path.stat().st_mtime,
             }
@@ -281,6 +300,9 @@ def _parse_opv2v_curves(run_dir):
                 "mean_rel_trans_m": rel.get("mean_rel_trans_m"),
                 "mean_rel_yaw_deg": rel.get("mean_rel_yaw_deg"),
                 "success_at_2m": rel.get("success_at_2m"),
+                "pose_applied_count": rel.get("pose_applied_count"),
+                "pose_match_sec": rel.get("pose_match_sec"),
+                "pose_provider_total_sec": rel.get("pose_provider_total_sec"),
                 "source": rel.get("source") or str((run_dir / "results_ap50_from_yaml.json").relative_to(ROOT)),
             }
         )
@@ -307,9 +329,21 @@ def _line_status(records):
         missing = [n for n in expect if n not in noises]
         ap50 = [v.get("ap50") for v in vals]
         rel_t = [v.get("mean_rel_trans_m") for v in vals]
+        applied = [v.get("pose_applied_count") for v in vals]
         ap50_mean = _mean(ap50)
         rel_t_mean = _mean(rel_t)
+        applied_mean = _mean(applied)
+
         status = "valid" if not missing else "incomplete"
+        if not missing and method not in {"baseline", "oracle", "single"}:
+            if applied_mean is None:
+                status = "unknown_applied"
+            else:
+                # Many pose-correction methods should have non-zero applied_count;
+                # if the whole curve is 0 it is effectively a no-op (often wiring bug).
+                applied_vals = [float(v) for v in applied if v is not None]
+                if applied_vals and all(v == 0.0 for v in applied_vals):
+                    status = "noop"
         rows.append(
             {
                 "dataset": dataset,
@@ -325,6 +359,7 @@ def _line_status(records):
                 "status": status,
                 "mean_ap50": ap50_mean,
                 "mean_rel_trans_m": rel_t_mean,
+                "mean_pose_applied_count": applied_mean,
             }
         )
     return rows
@@ -346,6 +381,7 @@ def _plot_curves(records, out_dir):
             ("mean_rel_yaw_deg", "Rel Yaw (deg)"),
         ):
             by_line = defaultdict(dict)
+            by_line_applied = defaultdict(dict)
             line_meta = {}
             for r in vals:
                 method = r["method"]
@@ -357,62 +393,89 @@ def _plot_curves(records, out_dir):
                 k = (method, strategy)
                 by_line[k][noise] = float(v)
                 line_meta[k] = (r.get("method_family"), r.get("method_init_class"))
+                a = r.get("pose_applied_count")
+                if a is not None:
+                    try:
+                        by_line_applied[k][noise] = float(a)
+                    except Exception:
+                        pass
 
             if not by_line:
                 continue
 
-            fig, ax = plt.subplots(figsize=(9.2, 5.6))
-            x_vals = [float(x) for x in NOISE_AXIS]
-            for (method, strategy), points in sorted(by_line.items()):
-                family, init_class = line_meta.get((method, strategy), ("other", "unknown"))
-                ys = [points.get(n) for n in NOISE_AXIS]
-                if all(v is None for v in ys):
-                    continue
-                ax.plot(
-                    x_vals,
-                    ys,
-                    color=COLOR_FAMILY.get(family, "#444444"),
-                    linestyle=LINESTYLE_STRATEGY.get(strategy, "-"),
-                    marker=MARKER_INIT.get(init_class, "o"),
-                    markersize=3.8,
-                    linewidth=1.6,
-                    label="%s-%s" % (method, strategy),
-                )
+            def _should_include_filtered(method, strategy):
+                if method in {"baseline", "oracle", "single"}:
+                    return True
+                pts = by_line_applied.get((method, strategy)) or {}
+                if not pts:
+                    # No applied-count signal (older YAML schema). Keep it in the filtered plot,
+                    # but registry will mark it as unknown_applied.
+                    return True
+                vals = [float(v) for v in pts.values() if v is not None]
+                return bool(vals) and any(v > 0.0 for v in vals)
 
-            ax.set_xlabel("pos_std (m) / rot_std (deg)")
-            ax.set_ylabel(ylabel)
-            ax.set_title("%s %s %s %s" % (dataset, suite, modality, ylabel))
-            ax.grid(True, linestyle="--", alpha=0.35)
+            def _plot(*, out_path, title_suffix, include_filtered):
+                fig, ax = plt.subplots(figsize=(9.2, 5.6))
+                x_vals = [float(x) for x in NOISE_AXIS]
+                for (method, strategy), points in sorted(by_line.items()):
+                    if include_filtered and not _should_include_filtered(method, strategy):
+                        continue
+                    family, init_class = line_meta.get((method, strategy), ("other", "unknown"))
+                    ys = [points.get(n) for n in NOISE_AXIS]
+                    if all(v is None for v in ys):
+                        continue
+                    ax.plot(
+                        x_vals,
+                        ys,
+                        color=COLOR_FAMILY.get(family, "#444444"),
+                        linestyle=LINESTYLE_STRATEGY.get(strategy, "-"),
+                        marker=MARKER_INIT.get(init_class, "o"),
+                        markersize=3.8,
+                        linewidth=1.6,
+                        label="%s-%s" % (method, strategy),
+                    )
 
-            family_handles = [
-                Line2D([0], [0], color=v, linestyle="-", linewidth=2.0, label=k)
-                for k, v in sorted(COLOR_FAMILY.items())
-                if k in {meta[0] for meta in line_meta.values()}
-            ]
-            if family_handles:
-                leg1 = ax.legend(handles=family_handles, title="Family", fontsize=8, loc="upper right")
-                ax.add_artist(leg1)
+                ax.set_xlabel("pos_std (m) / rot_std (deg)")
+                ax.set_ylabel(ylabel)
+                ax.set_title("%s %s %s %s%s" % (dataset, suite, modality, ylabel, title_suffix))
+                ax.grid(True, linestyle="--", alpha=0.35)
 
-            style_handles = [
-                Line2D([0], [0], color="black", linestyle="-", label="best"),
-                Line2D([0], [0], color="black", linestyle="--", label="stable"),
-                Line2D([0], [0], color="black", linestyle="-.", label="bounds"),
-            ]
-            leg2 = ax.legend(handles=style_handles, title="Strategy", fontsize=8, loc="lower left")
-            ax.add_artist(leg2)
+                family_handles = [
+                    Line2D([0], [0], color=v, linestyle="-", linewidth=2.0, label=k)
+                    for k, v in sorted(COLOR_FAMILY.items())
+                    if k in {meta[0] for meta in line_meta.values()}
+                ]
+                if family_handles:
+                    leg1 = ax.legend(handles=family_handles, title="Family", fontsize=8, loc="upper right")
+                    ax.add_artist(leg1)
 
-            init_handles = [
-                Line2D([0], [0], color="black", marker=v, linestyle="None", label=k)
-                for k, v in sorted(MARKER_INIT.items())
-                if k in {meta[1] for meta in line_meta.values()}
-            ]
-            ax.legend(handles=init_handles, title="Init Class", fontsize=8, loc="lower right")
+                style_handles = [
+                    Line2D([0], [0], color="black", linestyle="-", label="best"),
+                    Line2D([0], [0], color="black", linestyle="--", label="stable"),
+                    Line2D([0], [0], color="black", linestyle="-.", label="bounds"),
+                ]
+                leg2 = ax.legend(handles=style_handles, title="Strategy", fontsize=8, loc="lower left")
+                ax.add_artist(leg2)
 
+                init_handles = [
+                    Line2D([0], [0], color="black", marker=v, linestyle="None", label=k)
+                    for k, v in sorted(MARKER_INIT.items())
+                    if k in {meta[1] for meta in line_meta.values()}
+                ]
+                ax.legend(handles=init_handles, title="Init Class", fontsize=8, loc="lower right")
+
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                fig.tight_layout()
+                fig.savefig(out_path, dpi=220)
+                plt.close(fig)
+
+            # Default plots: filtered to only include methods that actually apply pose updates.
             out_path = out_dir / "plots" / ("%s_%s_%s_%s.png" % (dataset.lower(), suite, modality, metric))
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.tight_layout()
-            fig.savefig(out_path, dpi=220)
-            plt.close(fig)
+            _plot(out_path=out_path, title_suffix=" (effective-only)", include_filtered=True)
+
+            # Extra plots: include all lines for forensic comparison.
+            out_path_all = out_dir / "plots" / ("%s_%s_%s_%s_all.png" % (dataset.lower(), suite, modality, metric))
+            _plot(out_path=out_path_all, title_suffix=" (all)", include_filtered=False)
 
 
 def parse_args():
@@ -457,6 +520,9 @@ def main():
             "mean_rel_trans_m",
             "mean_rel_yaw_deg",
             "success_at_2m",
+            "pose_applied_count",
+            "pose_match_sec",
+            "pose_provider_total_sec",
             "source",
         ],
     )
@@ -478,6 +544,7 @@ def main():
             "status",
             "mean_ap50",
             "mean_rel_trans_m",
+            "mean_pose_applied_count",
         ],
     )
 

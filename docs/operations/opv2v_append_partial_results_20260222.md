@@ -6,6 +6,35 @@ This note snapshots the *current* (partial) results for the OPV2V append sweep t
 - `imagematch_noinit`, `imagematch_current`
 - `lidarreg_ransac`, `hkust_teaser`, `hkust_fgr`, `hkust_quatro`
 
+## IMPORTANT UPDATE (2026-02-23): imagematch “断档领先”已证实为不可用结论（no-op + mixed-version）
+
+这份 2026-02-22 的“partial results”仅能作为**历史记录**，不能作为最终 benchmark 的排序依据，原因是：
+
+1) **imagematch 在统一条件审计下为 no-op**
+- 在远端统一条件审计（同 commit / 同 env / 同 comm-range gating / 同样本子集）下：
+  `image_match_initfree` **不会 apply pose update**（`pose_provider_applied_count=0`），AP50 与 baseline 完全一致。
+  见：`docs/operations/imagematch_initfree_remote_audit_20260223.md`。
+- 在本地统一 smoke（同样冻结 `comm_range_gating=noisy`）下也复现：
+  - baseline：
+    `HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_none_opv2v_unified_smoke_20260223_fix1_camera_noise10_baseline_n1.0.yaml`
+  - imagematch_noinit：
+    `HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_image_match_initfree_opv2v_unified_smoke_20260223_fix1_camera_noise10_imagematch_noinit_best_n1.0.yaml`
+  - 结论：两者 AP30/50/70 逐项相同，且 `timing_stats[0].pose_timing.pose_provider_applied_count=0.0`。
+
+2) **同一 run_id（`opv2v_autopilot_full_20260216_auto3_a1`）存在 mixed-env + mid-run 修复混写**
+- core 与 append 使用了不同 python env（见下文“Important reproducibility note”）。
+- append 长跑过程中 HEAL 子模块发生关键修复（imagematch online payload、lidar_reg per-CAV raw points、T 方向修复等）。
+  因此同一 run_id 下不同任务可能对应不同代码语义，最终 numbers **不具备“同口径可比性”**。
+
+3) **LiDAR 的 lidarreg/hkust 也存在“早期任务退化”风险（需要重跑验证）**
+- 在 append run 的早期已完成任务里，可以观察到 `lidarreg_ransac` 与 `hkust_teaser` 产出**完全一致的曲线/误差**，
+  且 `match_sec` 极小（暗示 registration 没有真正跑起来，或 payload 缺失导致快速 no-op）：
+  - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_lidarreg_ransac_best_n1.0.yaml`
+  - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_hkust_teaser_best_n1.0.yaml`
+  - 两者在该点上 `ap50=0.595188...`、`rel_trans_m.mean=1.223692...`、`match_sec≈7e-4`。
+
+因此：**本文件中“imagematch AP 很高”的表格只保留为历史现象，不应作为最终对比结论。**
+
 Run directory (source of truth):
 
 - `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/`
@@ -203,8 +232,8 @@ Given:
 
 we should treat `imagematch_*` as *suspect until proven effective*.
 
-Additionally, the current **online pose-provider runtime** builds a minimal `base_data_dict`
-containing only `lidar_pose` (+ optional `lidar_pose_clean`) and **does not include `camera_data`**:
+Additionally, the **online pose-provider runtime** historically built a minimal `base_data_dict`
+containing only `lidar_pose` (+ optional `lidar_pose_clean`) and **did not include `camera_data`** (已在后续修复)：
 
 - `HEAL/opencood/utils/pose_provider_runtime.py:731` (base_data_dict construction)
 
@@ -215,6 +244,11 @@ But the image-match corrector requires `camera_data` + intrinsics to run:
 Action item (to make this benchmark self-validating):
 - log `pose_provider_applied` / “pairs matched” counters into YAML,
   and hard-gate runs where a method never applies any pose update.
+
+Update (2026-02-23, confirmed):
+- imagematch 的 online payload wiring 已修复；但在统一条件下默认安全门限仍常见 `pose_provider_applied_count=0`，
+  因而 imagematch 的“真实效果”应按 **no-op（等价 baseline）**对待，除非你明确选择更强 matcher/放松门限并重新跑 benchmark。
+- 同理，LiDAR 的 online lidar_reg/hkust 在 payload 未就绪时可能退化为 no-op；应以统一条件新 run_id 的结果为准。
 
 ## Pose Accuracy (Rel Errors) — Camera / noise10
 

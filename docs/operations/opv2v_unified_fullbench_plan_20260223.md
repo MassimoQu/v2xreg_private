@@ -6,7 +6,7 @@
 
 ## 结论
 
-- **ALLOW（先 smoke，再 full）**：已具备启动统一条件 smoke 的所有输入；但 full run 必须在 **git clean** 状态下启动。
+- **ALLOW（先 smoke，再 full）**：统一条件 smoke 已完成并验证关键链路；full run 必须在 **git clean** 状态下启动并冻结 `comm_range_gating`。
 
 ---
 
@@ -17,8 +17,9 @@
   - 主仓 `git_dirty=false`
   - HEAL 子模块 `heal_dirty=false`
   - submodule 指针已提交（主仓不再显示 `M HEAL`）
-- 证据：smoke 的 `config_snapshot.json` 里当前 `git_dirty=true`：
+- 证据：smoke 的 `config_snapshot.json` 里曾经 `git_dirty=true`：
   - `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/config_snapshot.json`
+- 修复状态：已在主仓提交 submodule bump（见 `git log`），当前可做到 clean（以实际 full run 启动时快照为准）。
 
 2) **Comm-range gating 语义必须冻结**
 - 已在调度器补齐 `--comm-range-gating` 并写入快照；full run 必须显式指定。
@@ -52,16 +53,21 @@ G3 Input Contract: PASS
   - camera：`HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope`
   - lidar：`HEAL/opencood/logs/freealign_repro_opv2v_baseline`
 
-G4 Smoke/Toolchain: PASS (in progress)
-- smoke run 已启动（见下）。
+G4 Smoke/Toolchain: PASS (done)
+- smoke run 已完成（见下）。
 
 G5 Confound/Cancellation: PASS (new mitigation landed)
 - 风险：online runtime 下 `comm_range_use_clean_pose` 的隐式切换会造成 cross-method confound。
 - 缓解：fullbench 调度器新增 `--comm-range-gating` 并写入快照（避免 baseline vs method 不同语义）。
 
-G6 Effectiveness: PASS (local micro-verify)
-- imagematch 路径已验证“可以 apply”（放松门限时 `pose_provider_applied_count=1.0`），说明 online payload wiring 生效；
-  但默认安全门限下大概率被拒绝（`applied_count=0`），属于算法能力问题而非 wiring bug。
+G6 Effectiveness: PASS (smoke evidence)
+- imagematch：在统一 smoke 下默认门限为 **no-op**（`pose_provider_applied_count=0.0`，AP 与 baseline 相同）：
+  - baseline：`HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_none_opv2v_unified_smoke_20260223_fix1_camera_noise10_baseline_n1.0.yaml`
+  - imagematch_noinit：`HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_image_match_initfree_opv2v_unified_smoke_20260223_fix1_camera_noise10_imagematch_noinit_best_n1.0.yaml`
+  - imagematch_current：`HEAL/opencood/logs/opv2v_camera_v2xvit_full_prope/AP030507_image_match_initfree_opv2v_unified_smoke_20260223_fix1_camera_noise10_imagematch_current_best_n1.0.yaml`
+- lidar_reg：在统一 smoke 下 `pose_provider_applied_count>0`（说明 online lidar payload wiring 生效）：
+  - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_unified_smoke_20260223_fix1_lidar_noise10_lidarreg_ransac_best_n1.0.yaml`
+  - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_unified_smoke_20260223_fix1_lidar_noise10_hkust_teaser_best_n1.0.yaml`
 
 G7 Source-of-Truth: PASS
 - completion：`run_state.jsonl`
@@ -86,7 +92,7 @@ Run dir（source of truth）：
 合同快照：
 - `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/config_snapshot.json`
 
-当前 smoke scope：
+smoke scope：
 - modality：camera + lidar
 - sweep：noise10
 - noise：pos=rot=1.0
@@ -94,6 +100,9 @@ Run dir（source of truth）：
 - bounds：baseline + oracle
 - comm_range_gating：`noisy`
 - max_eval_samples：20
+
+smoke completion（source of truth）：
+- `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/run_state.jsonl`（24 lines, 全部 code=0）
 
 ---
 
@@ -113,4 +122,3 @@ Run dir（source of truth）：
 - `tools/summarize_opv2v_fullbench_from_yaml.py --run-dir <run_dir> --allow-incomplete`
 - `tools/build_fullmatrix_benchmark_report.py`
 - `tools/build_unified_benchmark_report.py`
-

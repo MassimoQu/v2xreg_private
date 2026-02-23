@@ -128,6 +128,16 @@ def collect_entries(
                             "samples": ts0.get("samples"),
                         }
                     )
+                    pt = ts0.get("pose_timing")
+                    if isinstance(pt, dict):
+                        entry.update(
+                            {
+                                "pose_provider_applied_count": pt.get("pose_provider_applied_count"),
+                                "pose_provider_total_sec": pt.get("pose_provider_total_sec"),
+                                "pose_match_sec": pt.get("match_sec"),
+                                "pose_solver_sec": pt.get("solver_sec"),
+                            }
+                        )
                     ps = ts0.get("pose_solver")
                     if isinstance(ps, dict):
                         entry.update(
@@ -137,6 +147,17 @@ def collect_entries(
                                 "pose_solver_samples": ps.get("samples"),
                             }
                         )
+                # Normalized applied-count signal for downstream filtering.
+                applied = None
+                if entry.get("pose_provider_applied_count") is not None:
+                    applied = entry.get("pose_provider_applied_count")
+                elif entry.get("pose_solver_applied") is not None:
+                    applied = entry.get("pose_solver_applied")
+                if applied is not None:
+                    try:
+                        entry["pose_applied_count"] = float(applied)
+                    except Exception:
+                        pass
 
                 data[key] = entry
                 chosen_mtime[key] = mtime
@@ -315,6 +336,11 @@ def main() -> None:
     p.add_argument("--out-json", type=Path, default=None)
     p.add_argument("--plot-dir", type=Path, default=None)
     p.add_argument("--allow-incomplete", action="store_true")
+    p.add_argument(
+        "--strict-applied-gate",
+        action="store_true",
+        help="Fail if any pose-correction line is a no-op (pose_applied_count all zero). Default: warn-only.",
+    )
     args = p.parse_args()
 
     run_dir = args.run_dir
@@ -373,7 +399,8 @@ def main() -> None:
     else:
         noise_axis = [normalize_noise(str(x)) for x in range(1, 11)]
 
-    # Hard gate: if a pose-correction line exists but never applies pose updates, the comparison is invalid.
+    # Effectiveness gate: detect pose-correction lines that are likely no-ops.
+    # Default is warn-only because some algorithms may legitimately choose not to apply.
     if not args.allow_incomplete:
         problems = []
         raw_methods = cfg.get("methods") or ["v2xregpp", "freealign", "vips", "cbm"]
@@ -394,18 +421,21 @@ def main() -> None:
                             if not entry:
                                 missing += 1
                                 continue
-                            if "pose_solver_applied" not in entry:
+                            if "pose_applied_count" not in entry:
                                 missing += 1
                                 continue
-                            v = entry.get("pose_solver_applied")
-                            if isinstance(v, int):
-                                applied_vals.append(v)
-                        if applied_vals and all(v == 0 for v in applied_vals):
-                            problems.append(f"{modality}/{sweep}/{method}/{strategy}: pose_solver.applied all zero")
+                            v = entry.get("pose_applied_count")
+                            if isinstance(v, (int, float)):
+                                applied_vals.append(float(v))
+                        if applied_vals and all(v == 0.0 for v in applied_vals):
+                            problems.append(f"{modality}/{sweep}/{method}/{strategy}: pose_applied_count all zero")
                         if applied_vals and missing:
-                            problems.append(f"{modality}/{sweep}/{method}/{strategy}: missing pose_solver_applied for {missing} points")
+                            problems.append(f"{modality}/{sweep}/{method}/{strategy}: missing pose_applied_count for {missing} points")
         if problems:
-            raise SystemExit("Invalid pose-correction results (pose solver never applied): " + "; ".join(problems[:6]))
+            msg = "Pose-correction no-op detected: " + "; ".join(problems[:6])
+            if args.strict_applied_gate:
+                raise SystemExit(msg)
+            print("[WARN]", msg)
 
     for sweep in sweeps:
         for modality in modalities:

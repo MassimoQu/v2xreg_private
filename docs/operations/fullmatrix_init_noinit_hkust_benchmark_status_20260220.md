@@ -131,19 +131,32 @@
 
 以 `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/run_state.jsonl` 为准，
 当前 append scope（400 tasks）状态为：
-- done_in_scope=166
+- done_in_scope=187
 - in_progress=30
-- pending=204
+- pending=183
+
+补充：append 的 camera 4 条方法线（`vips_prior/cbm_prior/imagematch_{noinit,current}`）已全部跑完（noise10+drop20，n=1..10，best+stable）。
 
 ### 重要风险：mid-run 代码修复导致“同一 run_id 下混版本”
 
 在 append 长跑过程中，HEAL 子模块新增/修复了：
 - online runtime 的 imagematch payload（camera_data/intrinsic/extrinsic 注入）
+- online runtime 的 lidar_reg per-CAV raw LiDAR payload（`lidar_np_by_cav` 导出）
 - lidar_reg 的相对位姿方向（T）修复
 
 因此：
 - append 中早期开跑/已完成的 imagematch 与部分 lidar_reg/hkust 任务属于“旧代码版本结果”，不应直接并入最终 fullmatrix 结论；
 - 需要在 **git clean + 统一 comm-range gating** 的条件下重新启动一版 unified run（见下一条）。
+
+补充证据（why “旧版本结果”可能是退化的）：
+- camera/imagematch：在统一条件 smoke/remote audit 下，`image_match_initfree` 常见 `pose_provider_applied_count=0.0`，
+  AP 与 baseline 完全一致（等价 no-op）。见：
+  - `docs/operations/imagematch_initfree_remote_audit_20260223.md`
+  - `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/`
+- lidarreg/hkust：append 早期已完成的点上，`hkust_teaser` 与 `lidarreg_ransac` 可以出现 **AP/配准指标完全一致**，
+  且 `match_sec` 极小（典型 no-op / payload 未就绪特征）。例如（同一个点 n=1.0）：
+  - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_lidarreg_ransac_best_n1.0.yaml`
+  - `HEAL/opencood/logs/freealign_repro_opv2v_baseline/AP030507_lidar_reg_initfree_opv2v_autopilot_full_20260216_auto3_a1_lidar_noise10_hkust_teaser_best_n1.0.yaml`
 
 ### 新的统一合同与 smoke
 

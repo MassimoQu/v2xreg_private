@@ -214,10 +214,22 @@ def _parse_opv2v_rel_stats(run_dir, run_id):
             rel_t = (entry0.get("rel_trans_m") or {}).get("mean") if isinstance(entry0, dict) else None
             rel_y = (entry0.get("rel_yaw_deg") or {}).get("mean") if isinstance(entry0, dict) else None
             succ2 = (entry0.get("rel_success_at_m") or {}).get("2") if isinstance(entry0, dict) else None
+
+            pose_applied = None
+            ts_list = obj.get("timing_stats") or []
+            ts0 = ts_list[0] if isinstance(ts_list, list) and ts_list else {}
+            if isinstance(ts0, dict):
+                pt = ts0.get("pose_timing")
+                if isinstance(pt, dict):
+                    pose_applied = pt.get("pose_provider_applied_count")
+                ps = ts0.get("pose_solver")
+                if isinstance(ps, dict) and pose_applied is None:
+                    pose_applied = ps.get("applied")
             rec = {
                 "mean_rel_trans_m": float(rel_t) if rel_t is not None else None,
                 "mean_rel_yaw_deg": float(rel_y) if rel_y is not None else None,
                 "success_at_2m": float(succ2) if succ2 is not None else None,
+                "pose_applied_count": float(pose_applied) if pose_applied is not None else None,
                 "source_yaml": str(path.relative_to(ROOT)),
             }
             # Prefer newer files if duplicated keys exist.
@@ -276,6 +288,7 @@ def build_opv2v_table(opv2v_run_dir):
         rel_t = [float(it[2]["mean_rel_trans_m"]) for it in items if it[2] and it[2].get("mean_rel_trans_m") is not None]
         rel_y = [float(it[2]["mean_rel_yaw_deg"]) for it in items if it[2] and it[2].get("mean_rel_yaw_deg") is not None]
         succ2 = [float(it[2]["success_at_2m"]) for it in items if it[2] and it[2].get("success_at_2m") is not None]
+        applied = [float(it[2]["pose_applied_count"]) for it in items if it[2] and it[2].get("pose_applied_count") is not None]
 
         source_yamls = [it[2].get("source_yaml") for it in items if it[2] and it[2].get("source_yaml")]
         source_yamls = sorted(set(source_yamls))
@@ -296,6 +309,7 @@ def build_opv2v_table(opv2v_run_dir):
                 "success_at_2m": _mean(succ2),
                 "mean_rel_trans_m": _mean(rel_t),
                 "mean_rel_yaw_deg": _mean(rel_y),
+                "mean_pose_applied_count": _mean(applied),
                 "mean_infer_fps": _mean(infer_fps),
                 "num_points": len(items),
                 "run_id": run_id,
@@ -500,6 +514,7 @@ def main():
             "success_at_2m",
             "mean_rel_trans_m",
             "mean_rel_yaw_deg",
+            "mean_pose_applied_count",
             "mean_infer_fps",
             "num_points",
             "run_id",
