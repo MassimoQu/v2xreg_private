@@ -97,6 +97,13 @@ def main() -> None:
     p.add_argument("--save-every", type=int, default=10, help="Flush cache to disk every N samples.")
     p.add_argument("--resume", action="store_true", help="Resume from existing cache (skip existing keys).")
     p.add_argument("--seed", type=int, default=303, help="Seed used for any internal downsampling randomness.")
+    p.add_argument(
+        "--num-shards",
+        type=int,
+        default=1,
+        help="Optional sharding for parallel precompute. This process handles indices where idx %% num_shards == shard_id.",
+    )
+    p.add_argument("--shard-id", type=int, default=0, help="Shard id in [0, num_shards).")
 
     # Optional overrides for speed/quality trade-offs.
     p.add_argument("--voxel-size-m", type=float, default=1.0)
@@ -124,7 +131,20 @@ def main() -> None:
     if "test_dir" in hypes:
         hypes["validate_dir"] = hypes["test_dir"]
 
-    out = Path(args.out) if args.out else Path("data/OPV2V/lidar_reg_cache") / f"opv2v_test_{args.global_method}.json"
+    num_shards = max(1, int(args.num_shards or 1))
+    shard_id = int(args.shard_id or 0)
+    if shard_id < 0 or shard_id >= num_shards:
+        raise SystemExit(f"--shard-id must be in [0, {num_shards}), got {shard_id}")
+
+    if args.out:
+        out = Path(args.out)
+    else:
+        cache_root = Path("data/OPV2V/lidar_reg_cache")
+        if num_shards <= 1:
+            out = cache_root / f"opv2v_test_{args.global_method}.json"
+        else:
+            shard_dir = cache_root / "shards"
+            out = shard_dir / f"opv2v_test_{args.global_method}_shard{shard_id}of{num_shards}.json"
 
     existing_obj: dict = {}
     pairs: dict = {}
@@ -154,12 +174,18 @@ def main() -> None:
     cap = int(args.max_samples or 0)
     if cap > 0:
         total = min(total, cap)
+    indices = list(range(total))
+    if num_shards > 1:
+        indices = [i for i in indices if (int(i) % num_shards) == shard_id]
+    shard_total = len(indices)
 
     meta = {
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "model_dir": str(model_dir),
         "validate_dir": str(hypes.get("validate_dir", "")),
         "global_method": str(args.global_method),
+        "num_shards": int(num_shards),
+        "shard_id": int(shard_id),
         "cfg": {
             "voxel_size_m": cfg.voxel_size_m,
             "max_corr_dist_m": cfg.max_corr_dist_m,
@@ -177,7 +203,7 @@ def main() -> None:
     }
 
     start = time.perf_counter()
-    for idx in range(total):
+    for local_i, idx in enumerate(indices):
         base = dataset.retrieve_base_data(idx)
         if not isinstance(base, dict) or not base:
             continue
@@ -219,10 +245,10 @@ def main() -> None:
                 "inlier_rmse": float(est.extra.get("inlier_rmse", 0.0) or 0.0),
             }
 
-        if int(args.save_every) > 0 and (idx + 1) % int(args.save_every) == 0:
+        if int(args.save_every) > 0 and (local_i + 1) % int(args.save_every) == 0:
             _atomic_write_json(out, {"meta": meta, "pairs": pairs})
             elapsed = time.perf_counter() - start
-            print(f"[{idx+1}/{total}] wrote {out} (pairs={len(pairs)}) elapsed={elapsed:.1f}s")
+            print(f"[{local_i+1}/{shard_total}] wrote {out} (pairs={len(pairs)}) elapsed={elapsed:.1f}s")
 
     _atomic_write_json(out, {"meta": meta, "pairs": pairs})
     elapsed = time.perf_counter() - start

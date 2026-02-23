@@ -41,6 +41,25 @@ PYTHONPATH=$PWD/HEAL ./.micromamba/envs/v2x/bin/python tools/precompute_opv2v_li
   --max-samples 5 --save-every 1 --resume
 ```
 
+更快的 full-cache 方式（推荐）：**分片并行预计算 + 合并**（避免单进程跑几个小时）：
+
+```bash
+# Example: 16 shards for OPV2V test (2170 samples).
+N=16
+GM=teaser_gnctls
+for SID in $(seq 0 $((N-1))); do
+  PYTHONPATH=$PWD/HEAL ./.micromamba/envs/v2x/bin/python tools/precompute_opv2v_lidar_reg_cache.py \
+    --global-method ${GM} --max-samples 0 --save-every 50 --resume \
+    --num-shards ${N} --shard-id ${SID} &
+done
+wait
+
+python3 tools/merge_opv2v_lidar_reg_cache_shards.py \
+  --in-dir data/OPV2V/lidar_reg_cache/shards \
+  --pattern "opv2v_test_${GM}_shard*of${N}.json" \
+  --out data/OPV2V/lidar_reg_cache/opv2v_test_${GM}.json
+```
+
 fullbench 调度注入 cache（要求 cache 文件命名为 `opv2v_test_<global_method>.json`）：
 
 ```bash
