@@ -119,6 +119,13 @@ Notes:
 - For the 4 append camera methods, **`best` and `stable` AP@0.5 are identical** on the finished camera/noise10 subset.
 - `imagematch_noinit` (ORB default, CPU) exceeds `oracle_gt` on AP@0.5 at noise=1.0 in this run; treat this as *provisional* until we sanity-check “oracle” pose wiring and coordinate conventions.
 
+Update (2026-02-23, remote verification):
+
+- Under a fully unified setup on the remote OPV2V machine (same code commit/env, same dataset wiring, same comm-range gating, same sample subset),
+  `image_match_initfree` **does not apply any pose update** (`pose_provider_applied_count=0`) and its AP50 matches baseline exactly.
+- `init_source=none` vs `init_source=current` is also identical in that unified run.
+- See: `docs/operations/imagematch_initfree_remote_audit_20260223.md`.
+
 ## Sanity Check: Comm-Range Gating Is NOT The Explanation (Verified)
 
 Because `inference_w_noise.py` can flip `comm_range_use_clean_pose` automatically when pose correction is enabled,
