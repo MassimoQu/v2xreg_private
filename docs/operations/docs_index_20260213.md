@@ -32,6 +32,8 @@
   - 全矩阵（有初值/无初值/HKUST）补跑与统一出图执行状态。
 - `docs/operations/opv2v_append_partial_results_20260222.md`
   - OPV2V append（init/no-init/HKUST）阶段性结果 + 关键 sanity checks（含 env 混用提示）。
+- `docs/operations/imagematch_initfree_remote_audit_20260223.md`
+  - 在远端统一条件下验证 imagematch_initfree 的“是否真正生效”与“断档领先是否为假象”。
 - `docs/operations/experiment_progress.md`  
   - 大型实验进度汇总（较长，含历史结果与偏差分析）。
 - `docs/operations/heal_pose_fusion_execution_playbook.md`  
