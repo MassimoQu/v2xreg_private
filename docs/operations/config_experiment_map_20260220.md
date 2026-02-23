@@ -14,6 +14,7 @@
 | --- | --- | --- | --- | --- |
 | DAIR pose+AP 全量噪声 | `outputs/run_noise_sweep_1to10.py` | 在 DAIR 上统一比较注册方法对 AP 与配准的联动影响（camera/lidar） | `outputs/pose_sweep_1to10_full_gpuvoxel20260218_results.jsonl` | lidar 线显著收益；camera 线收益很弱 |
 | OPV2V online fullbench | `tools/run_opv2v_fullbench_fast.py` + autopilot | 在 online/register_and_fuse 条件下评估双模态双 sweep 的方法稳定性 | `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/` | lidar 上 v2xregpp/freealign 有效，camera 提升有限 |
+| 配准指标→AP 映射 | `tools/build_pose_error_to_ap_mapping_report.py` | 把配准评估（success@2m/误差）与下游 AP 建立可解释映射，用于预估与异常诊断 | `docs/operations/pose_error_to_ap_mapping_report_20260224.md`, `outputs/pose_error_to_ap_mapping_report_20260224/*` | lidar 对应关系强；camera 对应关系存在但增益空间小，且部分方法会系统性偏离 |
 | Table III (paper3737) 注册复现 | `configs/paper3737/dair/*`, `tools/sweep_*_table3.py` | 在 3737 对样本上对齐论文注册主表（含时间/成功率/误差） | `docs/operations/table3_paper3737_repro_status.md` | PP/SC 在 `te_re` 下可用；HKUST 三基线仍偏离论文 |
 | DAIR PP/SC test split 检测线 | `configs/dair/detection/pipeline_detection_pp.yaml`, `configs/dair/detection/pipeline_detection_sc.yaml` | 验证检测缓存对 V2X-Reg++ 注册成功率的影响 | `outputs/dair_v2xregpp_{pp,sc}15_test*/metrics.json` | 已完成；TE 与 TE_RE 口径差异需显式标注 |
 | Camera descriptor 系列 | `configs/camera/desc/*` | 尝试纯视觉描述子提升 camera 注册稳定性 | `outputs/camera_desc_*` 系列 | smoke 常有局部收益，但全量收益不稳定 |
