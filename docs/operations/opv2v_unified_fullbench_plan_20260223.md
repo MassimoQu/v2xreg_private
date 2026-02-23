@@ -25,6 +25,32 @@
 - 已在调度器补齐 `--comm-range-gating` 并写入快照；full run 必须显式指定。
 - 证据：`tools/run_opv2v_fullbench_fast.py` 已支持并写入 `comm_range_gating`。
 
+3) **HKUST / lidar_reg 全量跑需要 cache（否则成本爆炸）**
+- 现状：`lidar_reg_*` / `hkust_*` 属于 raw point-cloud 注册（FPFH + RANSAC/FGR/TEASER + ICP），
+  在 OPV2V test 上 per-sample CPU 代价很高（smoke 下 `match_sec` 可达 10s+）。
+- 风险：直接按 “10 noises × 2 sweeps × 2 strategies” 逐点重算，会把同一份点云注册重复做 40 次，
+  结果是 **GPU 反而在等 CPU**，总耗时不可控。
+- 缓解（推荐口径）：先离线预计算每个 (sample_idx, ego_id, cav_id) 的 `rel_T`，写成 JSON cache，
+  fullbench 时通过 `--lidar-reg-cache-dir` 注入，保证每个 pair 只算一次。
+
+离线预计算命令（示例：只做 OPV2V test 前 5 个样本 smoke；full 时去掉 `--max-samples`）：
+
+```bash
+PYTHONPATH=$PWD/HEAL ./.micromamba/envs/v2x/bin/python tools/precompute_opv2v_lidar_reg_cache.py \
+  --global-method teaser_gnctls \
+  --max-samples 5 --save-every 1 --resume
+```
+
+fullbench 调度注入 cache（要求 cache 文件命名为 `opv2v_test_<global_method>.json`）：
+
+```bash
+./bin/micromamba run -p .micromamba/envs/py39 python tools/run_opv2v_fullbench_fast.py \
+  --solver-backend online_box --runtime-mode register_and_fuse --pose-source noisy_input \
+  --comm-range-gating noisy \
+  --lidar-reg-cache-dir data/OPV2V/lidar_reg_cache --require-lidar-reg-cache \
+  ...
+```
+
 ---
 
 ## Gate 表（plan-preflight）
