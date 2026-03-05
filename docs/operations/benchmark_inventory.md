@@ -1,6 +1,6 @@
 # Benchmark Inventory & Hygiene
 
-Last updated: 2026-02-20
+Last updated: 2026-03-01
 
 This document consolidates all benchmark artifacts that currently exist in the repo,
 classifies them as **canonical (fair/official)** or **non‑canonical (partial/legacy)**,
@@ -12,7 +12,7 @@ before making any cross‑run comparison.
 A benchmark is considered **canonical** if it:
 - uses the **full evaluation split** (no max_eval_samples cap),
 - keeps **noise injection**, **comm_range**, and **stage1 cache** consistent,
-- includes **bounds** (baseline + oracle) and **single_comm0** where applicable,
+- includes **bounds** (baseline + oracle) and **single_ego_only** (`--force-ego-input-only`, noise=0) where applicable,
 - records enough metadata to reproduce (model dir, stage1 cache, noise lists, etc.).
 
 Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, missing metadata, etc.).
@@ -21,7 +21,7 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
 ## Canonical / Fair Benchmarks (Use These for Comparisons)
 
 ### A) HEAL Pose Alignment + Coop Benchmark (DAIR‑V2X, Full Sweep)
-- **Status:** complete, canonical
+- **Status:** complete, canonical **for cooperative methods** (the legacy single baseline in this run is `single_comm0`; do not use it as a fair "single vs coop" bound)
 - **Doc:** `HEAL/docs/pose_alignment_report_2026-02-05.md`
 - **Fairness review:** `HEAL/docs/pose_alignment_fairness_review.md`
 - **Master summary:** `HEAL/docs/pose_alignment_benchmark_master.md`
@@ -34,7 +34,7 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
   - Full test set, paired sweep (pos 1–10, rot 1–10 for camera / rot=0 for lidar)
   - Noise target: non‑ego
   - comm_range_override=100
-  - baseline + oracle + single_comm0 included
+  - baseline + oracle included; **legacy** `single_comm0` included (canonical single is now `single_ego_only`, see `docs/operations/benchmark_semantics.md`)
   - Same stage1 cache per modality across methods
 - **Latest DAIR noise10 refresh (same scope):**
   - `outputs/pose_sweep_1to10_full_gpuvoxel20260218_results.jsonl`
@@ -80,23 +80,30 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
 ## OPV2V Canonical Benchmark
 
 ### F) OPV2V Full Benchmark (OPV2V, online/fullbench)
-- **Status:** complete, canonical
-- **Trusted run id:** `opv2v_autopilot_full_20260216_auto3_a1`
-- **Artifacts (source of truth):**
+- **Status:** legacy / provisional (NOT canonical)
+- **Legacy run id (historical):** `opv2v_autopilot_full_20260216_auto3_a1`
+- **Why non‑canonical (as of 2026‑02‑24):**
+  - `comm_range_gating=auto` under online runtime (semantic drift risk; not “latest unified benchmark condition”)
+  - mixed‑env + mid‑run fixes mixed into the same run_id
+  - init/no-init/HKUST append scope is incomplete (`run_state.jsonl` has unmatched starts; lidar/drop20 HKUST not present)
+  - many `AP030507_*.yaml` are legacy schema without `pose_provider_applied_count` (no-op cannot be gated)
+- **Artifacts (source of truth, historical only):**
   - Run dir: `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/`
   - Completion events: `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/run_state.jsonl`
   - Results JSON: `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/results_ap50_from_yaml.json`
   - Plots: `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/plots_yaml/`
   - Config snapshot: `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/config_snapshot.json`
-- **Docs:**
-  - Evidence: `docs/operations/opv2v_fullbench_evidence_autopilot_20260216_auto3.md`
-  - Masterplan execution status: `docs/operations/opv2v_fullbench_masterplan_execution_status_20260217.md`
-  - Comparative analysis: `docs/operations/opv2v_fullbench_comparative_analysis_20260217.md`
-- **Notes / caveats:**
-  - For completion, **do not** trust `task_summary.json` (can be stale); use `run_state.jsonl` instead.
-  - Current `run_state.jsonl` includes post-append camera `v2xregpp_occhint` tasks; core cross-modal scope remains complete.
-  - "All‑GPU end‑to‑end" core lanes are now covered by gate artifacts (`outputs/benchmark_gate_report_20260220_fullgpu_gate_rerun2.md`, `outputs/benchmark_gate_report_20260220_fullgpu_featrefine_gate.md`), both with T06 `bad_fallback=[]`.
-  - Unified AP+pose table: `outputs/benchmark_unified_20260220/opv2v_dual_suite_ap_reg.csv`
+- **Docs (historical context):**
+  - `docs/operations/opv2v_append_partial_results_20260222.md`
+  - `docs/operations/imagematch_initfree_remote_audit_20260223.md`
+
+### G) OPV2V Unified Fullbench (Target Canonical)
+- **Status:** pending (smoke passed; full not launched yet)
+- **Smoke run (mechanism validation):**
+  - `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/`
+- **Plan contract / preflight gates:**
+  - `docs/operations/opv2v_unified_fullbench_plan_20260223.md`
+  - `docs/operations/benchmark_pending_runs_and_plan_20260224.md`
 
 
 ## How to Compare (Recommended)
@@ -105,15 +112,13 @@ Everything else is **non‑canonical** (smoke runs, partials, per‑CAV caches, 
 2) **Do not mix** per‑CAV stage1 results (Section C) with canonical runs.  
 3) **Do not compare** fast/partial sweeps (Section B) against full sweeps.  
 4) **OPV2V** should be compared only after AP values are validated.
-5) For unified cross-dataset comparisons, use:
-   - `docs/operations/unified_benchmark_contract_and_comparison_20260220.md`
-   - `outputs/benchmark_unified_20260220/coverage_checks.json`
-   - `outputs/benchmark_fullmatrix_20260220/combined_noise_curve_long.csv`
-   - `outputs/benchmark_fullmatrix_20260220/plots/`
+5) For unified cross-dataset comparisons:
+   - Use `docs/operations/benchmark_pending_runs_and_plan_20260224.md` as the “what to run next” contract.
+   - Treat `docs/operations/unified_benchmark_contract_and_comparison_20260220.md` as **legacy** for OPV2V (DAIR part still useful as reference).
 
 
 ## TODO (to make the catalog complete)
-- (Done) Finish OPV2V full benchmark and validate AP correctness.
+- (TODO) Run OPV2V unified fullbench under frozen semantics (new run_id; git clean; comm_range_gating fixed).
 - (Done) Add lightweight unified manifest/tables for DAIR + OPV2V:
   - `outputs/benchmark_unified_20260220/*.csv`
   - `outputs/benchmark_unified_20260220/coverage_checks.json`

@@ -20,7 +20,10 @@ LIDAR_STAGE1 = ROOT / "data" / "DAIR-V2X" / "detected" / "veh_rsu_dual_bevpeaks_
 CAMERA_SINGLE_MODEL = ROOT / "HEAL" / "opencood" / "logs" / "Pyramid_DAIR_m2_lssresnet_single_2025_11_24_23_53_08"
 LIDAR_SINGLE_MODEL = ROOT / "HEAL" / "opencood" / "logs" / "Pyramid_DAIR_m1_pointpillars_single_2025_11_24_18_47_23"
 
-V2XREGPP_CONFIG = ROOT / "configs" / "pipeline_midfusion_detection_occ.yaml"
+V2XREGPP_CONFIG = ROOT / "configs" / "dair" / "midfusion" / "pipeline_midfusion_detection_occ.yaml"
+if not V2XREGPP_CONFIG.exists():
+    # Backward-compat path used by older notes/scripts.
+    V2XREGPP_CONFIG = ROOT / "configs" / "pipeline_midfusion_detection_occ.yaml"
 
 
 METHODS = {
@@ -71,9 +74,11 @@ def build_jobs(
         ("camera", camera_model, camera_stage1, camera_single_model),
         ("lidar", lidar_model, lidar_stage1, lidar_single_model),
     ):
-        effective_single = single_model
-        if effective_single is None and single_from_coop:
-            effective_single = model_dir
+        # Canonical comparable single bound must reuse the coop checkpoint and keep comm_range/GT fixed.
+        canonical_single_model = model_dir
+        # Optional: a dedicated single checkpoint (fusion_method=single) is a different detector;
+        # we keep it separate and explicitly named single_ckpt (not a coop bound).
+        single_ckpt_model = single_model
         # noise sweep
         jobs.extend(
             _build_sweep_jobs(
@@ -88,16 +93,31 @@ def build_jobs(
                 include_single=False,
             )
         )
-        if effective_single is not None:
+        # Canonical single_ego_only (comparable bound) always uses the coop checkpoint.
+        jobs.extend(
+            _build_single_jobs(
+                run_id=run_id,
+                modality=modality,
+                model_dir=canonical_single_model,
+                sweep_tag="noise10",
+                noise_list=noise_list,
+                rot_list=rot_list,
+                dropout_prob=0.0,
+            )
+        )
+        # Optional single-ckpt (different detector): explicit naming via include_single=True.
+        if single_ckpt_model is not None and Path(single_ckpt_model) != Path(canonical_single_model):
             jobs.extend(
-                _build_single_jobs(
+                _build_sweep_jobs(
                     run_id=run_id,
                     modality=modality,
-                    model_dir=effective_single,
+                    model_dir=Path(single_ckpt_model),
+                    stage1=stage1,
                     sweep_tag="noise10",
                     noise_list=noise_list,
                     rot_list=rot_list,
                     dropout_prob=0.0,
+                    include_single=True,
                 )
             )
         if include_dropout:
@@ -114,16 +134,29 @@ def build_jobs(
                     include_single=False,
                 )
             )
-            if effective_single is not None:
+            jobs.extend(
+                _build_single_jobs(
+                    run_id=run_id,
+                    modality=modality,
+                    model_dir=canonical_single_model,
+                    sweep_tag="drop20",
+                    noise_list=noise_list,
+                    rot_list=rot_list,
+                    dropout_prob=dropout_prob,
+                )
+            )
+            if single_ckpt_model is not None and Path(single_ckpt_model) != Path(canonical_single_model):
                 jobs.extend(
-                    _build_single_jobs(
+                    _build_sweep_jobs(
                         run_id=run_id,
                         modality=modality,
-                        model_dir=effective_single,
+                        model_dir=Path(single_ckpt_model),
+                        stage1=stage1,
                         sweep_tag="drop20",
                         noise_list=noise_list,
                         rot_list=rot_list,
                         dropout_prob=dropout_prob,
+                        include_single=True,
                     )
                 )
     return jobs
@@ -147,9 +180,11 @@ def _build_sweep_jobs(*, run_id, modality, model_dir, stage1, sweep_tag, noise_l
         common.append(f"--pose-dropout-prob {dropout_prob}")
 
     if include_single:
-        note = f"_{run_id}_{modality}_{sweep_tag}_single"
+        # Single-ckpt forward (fusion_method=single). This is *not* a comparable bound for coop
+        # methods unless you explicitly want a different detector; keep the naming explicit.
+        note = f"_{run_id}_{modality}_{sweep_tag}_single_ckpt"
         cmd = _build_cmd(common, f"--fusion_method single --pose-correction none --note {note}")
-        jobs.append((f"{modality}_{sweep_tag}_single", cmd))
+        jobs.append((f"{modality}_{sweep_tag}_single_ckpt", cmd))
 
     # coop baseline (no correction)
     note = f"_{run_id}_{modality}_{sweep_tag}_baseline"
@@ -190,7 +225,6 @@ def _build_single_jobs(*, run_id, modality, model_dir, sweep_tag, noise_list, ro
     common = [
         f"--model_dir {model_dir}",
         "--fusion_method intermediate",
-        "--comm-range-override 0",
         "--pos-std-list 0",
         "--rot-std-list 0",
         "--sweep-mode paired",
@@ -199,13 +233,15 @@ def _build_single_jobs(*, run_id, modality, model_dir, sweep_tag, noise_list, ro
         "--log-interval 200",
         "--pose-timing",
         "--pose-device cuda",
+        "--force-ego-input-only",
     ]
     if dropout_prob and dropout_prob > 0:
         common.append(f"--pose-dropout-prob {dropout_prob}")
 
-    note = f"_{run_id}_{modality}_{sweep_tag}_single"
+    # Canonical comparable single baseline: keep comm_range/GT fixed, but forward uses ego only.
+    note = f"_{run_id}_{modality}_{sweep_tag}_single_ego_only"
     cmd = _build_cmd(common, f"--pose-correction none --note {note}")
-    jobs.append((f"{modality}_{sweep_tag}_single", cmd))
+    jobs.append((f"{modality}_{sweep_tag}_single_ego_only", cmd))
     return jobs
 
 
@@ -262,8 +298,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", type=str, default=None)
     parser.add_argument("--gpus", type=str, default="0,1,2,3,4,5,6,7,8,9")
-    parser.add_argument("--noise-list", type=str, default="1,2,3,4,5,6,7,8,9,10")
-    parser.add_argument("--rot-list", type=str, default="1,2,3,4,5,6,7,8,9,10")
+    parser.add_argument("--noise-list", type=str, default="0,1,2,3,4,5,6,7,8,9,10")
+    parser.add_argument("--rot-list", type=str, default="0,1,2,3,4,5,6,7,8,9,10")
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--no-dropout", action="store_true")
     parser.add_argument("--camera-model", type=str, default=str(CAMERA_MODEL))
@@ -275,7 +311,7 @@ def main():
     parser.add_argument(
         "--single-from-coop",
         action="store_true",
-        help="Use coop model for single baseline if single model path is empty.",
+        help="(Deprecated) No-op under current semantics; canonical single is always single_ego_only from the coop checkpoint.",
     )
     parser.add_argument("--launch", action="store_true")
     args = parser.parse_args()

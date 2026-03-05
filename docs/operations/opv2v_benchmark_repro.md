@@ -88,24 +88,27 @@ Hard gate (recommended before running any benchmark jobs):
 
 ## Step 4 — Run full benchmark
 
+> WARNING（2026-03-01）：online benchmark 必须显式冻结 comm-range gating（禁止 `auto`），否则不同 backend/方法可能悄悄处在不同 pruning 语义里，结果不可比。  
+> 统一语义见：`docs/operations/benchmark_semantics.md`。
+
 ```bash
 # Full benchmark (noise sweep + dropout sweep)
-./scripts/run_opv2v_fullbench.sh
+./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy
 
 # Smoke first (recommended): small subset + reduced noise points
-SMOKE=1 ./scripts/run_opv2v_fullbench.sh
+SMOKE=1 ./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy
 
 # Force online end-to-end semantics (register_and_fuse)
-SOLVER_BACKEND=online_box RUNTIME_MODE=register_and_fuse ./scripts/run_opv2v_fullbench.sh
+SOLVER_BACKEND=online_box RUNTIME_MODE=register_and_fuse ./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy
 
 # Only noise sweep (skip dropout)
-NO_DROPOUT=1 ./scripts/run_opv2v_fullbench.sh
+NO_DROPOUT=1 ./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy
 
 # Limit GPUs
-GPU_LIST=0,1,2,3 ./scripts/run_opv2v_fullbench.sh
+GPU_LIST=0,1,2,3 ./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy
 
 # Manual sample cap for fast sanity
-MAX_EVAL_SAMPLES=100 ./scripts/run_opv2v_fullbench.sh
+MAX_EVAL_SAMPLES=100 ./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy
 ```
 
 The launcher writes logs and `run_state.jsonl` to:

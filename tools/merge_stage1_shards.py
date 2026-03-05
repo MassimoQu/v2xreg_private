@@ -24,6 +24,12 @@ def main():
     ap.add_argument("--shard-dir", type=Path, required=True, help="Directory containing shard JSONs.")
     ap.add_argument("--num-shards", type=int, required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument(
+        "--write-head200",
+        action="store_true",
+        help="Also write stage1_boxes_head200.json next to --out (deterministic first-200 keys).",
+    )
+    ap.add_argument("--head-n", type=int, default=200, help="Number of samples to keep for the head cache (default: 200).")
     ap.add_argument("--expected-samples", type=int, default=0)
     ap.add_argument("--require-contiguous-keys", action="store_true")
     args = ap.parse_args()
@@ -71,7 +77,21 @@ def main():
     args.out.write_text(json.dumps(merged, sort_keys=True), encoding="utf-8")
     print("Wrote merged stage1 cache: {} (samples={})".format(args.out, len(merged)))
 
+    if bool(args.write_head200):
+        head_n = int(args.head_n)
+        if head_n <= 0:
+            raise SystemExit("--head-n must be >= 1 when --write-head200 is enabled")
+        keys_sorted = sorted((int(k), str(k)) for k in merged.keys() if str(k).isdigit())
+        head_keys = [ks for _ik, ks in keys_sorted[:head_n]]
+        head = {k: merged[k] for k in head_keys}
+        if args.out.name == "stage1_boxes.json":
+            head_path = args.out.with_name(f"stage1_boxes_head{head_n}.json")
+        else:
+            stem = args.out.stem
+            head_path = args.out.with_name(f"{stem}_head{head_n}{args.out.suffix}")
+        head_path.write_text(json.dumps(head, sort_keys=True), encoding="utf-8")
+        print("Wrote head cache: {} (samples={})".format(head_path, len(head)))
+
 
 if __name__ == "__main__":
     main()
-

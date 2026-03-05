@@ -47,17 +47,26 @@ def parse_ap_filename(path: Path, run_id: str) -> Optional[Tuple[Key, str]]:
     pose_correction = stem[len("AP030507_") : pos]
     remainder = stem[pos + len(marker) :]
 
-    # single (comm_range=0) => noise 0.0
-    m = re.match(r"^(camera|lidar)_(noise10|drop20)_single$", remainder)
+    # canonical single (ego-only forward; comm_range/GT fixed) => noise 0.0
+    m = re.match(r"^(camera|lidar)_(noise10|drop20)_single_ego_only$", remainder)
     if m:
         modality, sweep = m.groups()
         return (modality, sweep, "single", "bounds", normalize_noise("0")), pose_correction
+
+    # legacy single_comm0 (comm_range_override=0) => also noise 0.0 but NOT comparable (task changes)
+    m = re.match(r"^(camera|lidar)_(noise10|drop20)_single$", remainder)
+    if m:
+        modality, sweep = m.groups()
+        return (modality, sweep, "legacy_single_comm0", "bounds", normalize_noise("0")), pose_correction
 
     # baseline/oracle bounds
     m = re.match(r"^(camera|lidar)_(noise10|drop20)_(baseline|oracle)_n([0-9.]+)$", remainder)
     if m:
         modality, sweep, method, noise = m.groups()
-        return (modality, sweep, method, "bounds", normalize_noise(noise)), pose_correction
+        # Keep oracle variants explicit so plots/tables don't silently mix meanings.
+        # For canonical OPV2V runs this becomes method="oracle_gt".
+        method_out = pose_correction if method == "oracle" else method
+        return (modality, sweep, method_out, "bounds", normalize_noise(noise)), pose_correction
 
     # methods best/stable
     m = re.match(r"^(camera|lidar)_(noise10|drop20)_([a-z0-9_]+)_(best|stable)_n([0-9.]+)$", remainder)
@@ -76,6 +85,20 @@ def _first_float(v: Any) -> Optional[float]:
             return None
     if isinstance(v, (int, float)):
         return float(v)
+    return None
+
+
+def _rel0(obj: dict) -> Optional[dict]:
+    """
+    OPV2V AP030507 YAMLs may store rel_error_stats either as:
+      - a dict (when the YAML corresponds to a single noise point), or
+      - a list[dict] aligned with pos_std_list (older/unsplit runs).
+    """
+    rel = obj.get("rel_error_stats")
+    if isinstance(rel, dict):
+        return rel
+    if isinstance(rel, list) and rel and isinstance(rel[0], dict):
+        return rel[0]
     return None
 
 
@@ -115,6 +138,39 @@ def collect_entries(
                     "ap50": ap50_val,
                     "ap70": ap70_val,
                 }
+                # pose error stats (optional, but useful for evidence chain)
+                rel0 = _rel0(obj)
+                if isinstance(rel0, dict):
+                    rt = rel0.get("rel_trans_m") or {}
+                    ry = rel0.get("rel_yaw_deg") or {}
+                    rs = rel0.get("rel_success_at_m") or {}
+                    if isinstance(rt, dict):
+                        entry.update(
+                            {
+                                "mean_rel_trans_m": rt.get("mean"),
+                                "median_rel_trans_m": rt.get("median"),
+                                "p90_rel_trans_m": rt.get("p90"),
+                            }
+                        )
+                    if isinstance(ry, dict):
+                        entry.update(
+                            {
+                                "mean_rel_yaw_deg": ry.get("mean"),
+                                "median_rel_yaw_deg": ry.get("median"),
+                                "p90_rel_yaw_deg": ry.get("p90"),
+                            }
+                        )
+                    if isinstance(rs, dict):
+                        # Keep a couple of common thresholds as separate fields.
+                        entry.update(
+                            {
+                                "success_at_1m": rs.get("1"),
+                                "success_at_2m": rs.get("2"),
+                                "success_at_3m": rs.get("3"),
+                                "success_at_5m": rs.get("5"),
+                                "success_at_10m": rs.get("10"),
+                            }
+                        )
                 # timing stats (optional)
                 ts_list = obj.get("timing_stats") or []
                 ts0 = ts_list[0] if isinstance(ts_list, list) and ts_list else {}
@@ -136,6 +192,15 @@ def collect_entries(
                                 "pose_provider_total_sec": pt.get("pose_provider_total_sec"),
                                 "pose_match_sec": pt.get("match_sec"),
                                 "pose_solver_sec": pt.get("solver_sec"),
+                                # Optional pose-correction reason breakdown (stage1 correctors: freealign/vips/cbm).
+                                "pose_corr_pair_total_count": pt.get("pose_corr_pair_total_count"),
+                                "pose_corr_applied_pair_count": pt.get("pose_corr_applied_pair_count"),
+                                "pose_corr_skip_empty_boxes_count": pt.get("pose_corr_skip_empty_boxes_count"),
+                                "pose_corr_skip_no_matches_count": pt.get("pose_corr_skip_no_matches_count"),
+                                "pose_corr_skip_svd_failed_count": pt.get("pose_corr_skip_svd_failed_count"),
+                                "pose_corr_skip_compare_gate_count": pt.get("pose_corr_skip_compare_gate_count"),
+                                "pose_corr_skip_exception_count": pt.get("pose_corr_skip_exception_count"),
+                                "pose_corr_skip_other_count": pt.get("pose_corr_skip_other_count"),
                             }
                         )
                     ps = ts0.get("pose_solver")
@@ -215,6 +280,8 @@ def plot_series(
         "vips": "#2ca02c",
         "cbm": "#d62728",
         "baseline": "#7f7f7f",
+        "oracle_gt": "#9467bd",
+        # Backward-compat: some older summaries used the generic token.
         "oracle": "#9467bd",
         "single": "#000000",
     }
@@ -238,7 +305,7 @@ def plot_series(
         ax.plot(
             x_vals,
             ys,
-            color=color_map.get(method, "#333333"),
+            color=color_map.get(method, "#9467bd" if str(method).startswith("v2vloc_oracle") else "#333333"),
             linestyle=style_map.get(strategy, "-"),
             linewidth=1.8,
             label=f"{method}-{strategy}",
@@ -246,6 +313,11 @@ def plot_series(
 
     ax.set_xlabel("pos_std (m) / rot_std (deg)")
     ax.set_ylabel(ylabel)
+    if x_vals:
+        ax.set_xlim(min(x_vals), max(x_vals))
+        ax.set_xticks(x_vals)
+    # Keep AP plots comparable across DAIR/OPV2V/V2V4Real core runs.
+    ax.set_ylim(0.0, 1.0)
     ax.grid(True, linestyle="--", alpha=0.4)
     ax.set_title(title)
     ax.legend(fontsize=7, ncol=2)
@@ -271,6 +343,8 @@ def plot_combined(
         "vips": "#2ca02c",
         "cbm": "#d62728",
         "baseline": "#7f7f7f",
+        "oracle_gt": "#9467bd",
+        # Backward-compat: some older summaries used the generic token.
         "oracle": "#9467bd",
         "single": "#000000",
     }
@@ -296,7 +370,7 @@ def plot_combined(
             ax.plot(
                 x_vals,
                 ys,
-                color=color_map.get(method, "#333333"),
+                color=color_map.get(method, "#9467bd" if str(method).startswith("v2vloc_oracle") else "#333333"),
                 linestyle=style_map.get(strategy, "-"),
                 marker=marker_map.get(modality, "o"),
                 markersize=4.0,
@@ -305,6 +379,10 @@ def plot_combined(
 
     ax.set_xlabel("pos_std (m) / rot_std (deg)")
     ax.set_ylabel(ylabel)
+    if x_vals:
+        ax.set_xlim(min(x_vals), max(x_vals))
+        ax.set_xticks(x_vals)
+    ax.set_ylim(0.0, 1.0)
     ax.grid(True, linestyle="--", alpha=0.4)
     ax.set_title(title)
 
@@ -335,11 +413,24 @@ def main() -> None:
     p.add_argument("--run-id", type=str, default=None, help="Defaults to basename after full_bench_.")
     p.add_argument("--out-json", type=Path, default=None)
     p.add_argument("--plot-dir", type=Path, default=None)
+    p.add_argument(
+        "--clean-plot-dir",
+        action="store_true",
+        help="Remove existing *.png in plot_dir before writing new plots (avoids stale noise4/noise10 mix).",
+    )
     p.add_argument("--allow-incomplete", action="store_true")
+    p.add_argument(
+        "--include-legacy",
+        action="store_true",
+        help="Include legacy entries in outputs/plots (e.g., legacy_single_comm0). Default: exclude to avoid semantic drift.",
+    )
     p.add_argument(
         "--strict-applied-gate",
         action="store_true",
-        help="Fail if any pose-correction line is a no-op (pose_applied_count all zero). Default: warn-only.",
+        help=(
+            "Fail if any pose-correction line is a no-op (pose_applied_count all zero) OR if an online run is missing "
+            "pose_applied_count for all present points (legacy YAML schema). Default: warn-only."
+        ),
     )
     args = p.parse_args()
 
@@ -364,6 +455,8 @@ def main() -> None:
         sweeps = ["noise10", "drop20"]
 
     data = collect_entries(run_id=args.run_id, camera_model_dir=camera_model, lidar_model_dir=lidar_model)
+    if not bool(args.include_legacy):
+        data = {k: v for k, v in data.items() if not str(k[2]).startswith("legacy_")}
 
     out_json = args.out_json or (run_dir / "results_ap50_from_yaml.json")
     out_json.write_text(
@@ -391,51 +484,70 @@ def main() -> None:
 
     plot_dir = args.plot_dir or (run_dir / "plots_yaml")
     plot_dir.mkdir(parents=True, exist_ok=True)
+    if bool(args.clean_plot_dir):
+        for pth in plot_dir.glob("*.png"):
+            try:
+                pth.unlink()
+            except Exception:
+                pass
 
     # Prefer config snapshot noise axis; fall back to legacy 1..10.
     raw_noise_axis = cfg.get("noise_list") or []
     if isinstance(raw_noise_axis, list) and raw_noise_axis:
         noise_axis = [normalize_noise(str(x)) for x in raw_noise_axis]
     else:
-        noise_axis = [normalize_noise(str(x)) for x in range(1, 11)]
+        noise_axis = [normalize_noise(str(x)) for x in range(0, 11)]
 
-    # Effectiveness gate: detect pose-correction lines that are likely no-ops.
-    # Default is warn-only because some algorithms may legitimately choose not to apply.
-    if not args.allow_incomplete:
-        problems = []
-        raw_methods = cfg.get("methods") or ["v2xregpp", "freealign", "vips", "cbm"]
-        if isinstance(raw_methods, str):
-            methods = [x.strip() for x in raw_methods.split(",") if x.strip()]
-        elif isinstance(raw_methods, list):
-            methods = [str(x).strip() for x in raw_methods if str(x).strip()]
-        else:
-            methods = ["v2xregpp", "freealign", "vips", "cbm"]
-        for modality in modalities:
-            for sweep in sweeps:
-                for method in methods:
-                    for strategy in ("best", "stable"):
-                        applied_vals = []
-                        missing = 0
-                        for noise in noise_axis:
-                            entry = data.get((modality, sweep, method, strategy, noise))
-                            if not entry:
-                                missing += 1
-                                continue
-                            if "pose_applied_count" not in entry:
-                                missing += 1
-                                continue
-                            v = entry.get("pose_applied_count")
-                            if isinstance(v, (int, float)):
-                                applied_vals.append(float(v))
-                        if applied_vals and all(v == 0.0 for v in applied_vals):
-                            problems.append(f"{modality}/{sweep}/{method}/{strategy}: pose_applied_count all zero")
-                        if applied_vals and missing:
-                            problems.append(f"{modality}/{sweep}/{method}/{strategy}: missing pose_applied_count for {missing} points")
-        if problems:
-            msg = "Pose-correction no-op detected: " + "; ".join(problems[:6])
-            if args.strict_applied_gate:
-                raise SystemExit(msg)
-            print("[WARN]", msg)
+    # Effectiveness gate: detect pose-correction lines that are likely no-ops, and catch legacy YAML schemas
+    # (missing pose_applied_count) for online runs.
+    solver_backend = str(cfg.get("solver_backend") or "").strip().lower()
+    expects_applied = solver_backend.startswith("online_")
+    problems = []
+    raw_methods = cfg.get("methods") or ["v2xregpp", "freealign", "vips", "cbm"]
+    if isinstance(raw_methods, str):
+        methods = [x.strip() for x in raw_methods.split(",") if x.strip()]
+    elif isinstance(raw_methods, list):
+        methods = [str(x).strip() for x in raw_methods if str(x).strip()]
+    else:
+        methods = ["v2xregpp", "freealign", "vips", "cbm"]
+    for modality in modalities:
+        for sweep in sweeps:
+            for method in methods:
+                for strategy in ("best", "stable"):
+                    present = 0
+                    missing_applied = 0
+                    applied_vals = []
+                    for noise in noise_axis:
+                        entry = data.get((modality, sweep, method, strategy, noise))
+                        if not entry:
+                            continue
+                        present += 1
+                        if "pose_applied_count" not in entry:
+                            missing_applied += 1
+                            continue
+                        v = entry.get("pose_applied_count")
+                        if isinstance(v, (int, float)):
+                            applied_vals.append(float(v))
+
+                    if expects_applied and present > 0 and not applied_vals:
+                        # This is almost always a legacy YAML schema produced before we recorded pose_provider_applied_count.
+                        problems.append(
+                            f"{modality}/{sweep}/{method}/{strategy}: missing pose_applied_count for all {present} present points "
+                            f"(solver_backend={solver_backend})"
+                        )
+                    elif expects_applied and present > 0 and missing_applied:
+                        problems.append(
+                            f"{modality}/{sweep}/{method}/{strategy}: missing pose_applied_count for {missing_applied}/{present} present points "
+                            f"(solver_backend={solver_backend})"
+                        )
+
+                    if applied_vals and all(v == 0.0 for v in applied_vals):
+                        problems.append(f"{modality}/{sweep}/{method}/{strategy}: pose_applied_count all zero (likely no-op)")
+    if problems:
+        msg = "Pose-correction effectiveness issues detected: " + "; ".join(problems[:6])
+        if args.strict_applied_gate:
+            raise SystemExit(msg)
+        print("[WARN]", msg)
 
     for sweep in sweeps:
         for modality in modalities:
@@ -457,7 +569,7 @@ def main() -> None:
                 if include_baseline:
                     expected_lines.append(("baseline", "bounds"))
                 if include_oracle:
-                    expected_lines.append(("oracle", "bounds"))
+                    expected_lines.append(("oracle_gt", "bounds"))
                 for m in methods:
                     expected_lines.append((m, "best"))
                     expected_lines.append((m, "stable"))

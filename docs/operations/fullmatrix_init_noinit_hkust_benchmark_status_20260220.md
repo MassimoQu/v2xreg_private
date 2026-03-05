@@ -171,3 +171,32 @@
 已启动 smoke（用于验证机制与产物链路）：
 - `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/`
 - 合同与 preflight 记录：`docs/operations/opv2v_unified_fullbench_plan_20260223.md`
+
+---
+
+## Update（2026-02-24）
+
+### 当前“到底还在跑什么？”
+
+当前没有检测到正在运行的调度进程（以 `pgrep -af run_opv2v_fullbench_fast.py` 为准）。
+
+旧 run（`opv2v_autopilot_full_20260216_auto3_a1`）状态更新（source-of-truth）：
+- `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/run_state.jsonl`：`start=668`，`end=638`（不完整）
+
+结论：
+- 该 run_id 只能保留为历史记录；最终 fullmatrix 需要全新 unified run_id 重跑收口。
+
+### 新增：配准指标 ↔ AP 对应关系报告（用于筛选/止损/解释）
+
+已落地并可复核：
+- 文档：`docs/operations/pose_error_to_ap_mapping_report_20260224.md`
+- 产物：`outputs/pose_error_to_ap_mapping_report_20260224/`
+
+### 下一步执行合同（把“待跑项”收口到可执行清单）
+
+见：
+- `docs/operations/benchmark_pending_runs_and_plan_20260224.md`
+
+备注：
+- 在本 Codex harness 里，`nohup ... &` 这类后台方式不稳定（子进程会被回收）；
+  长跑建议统一用 `tmux` 托管（该仓库机器已安装 tmux）。

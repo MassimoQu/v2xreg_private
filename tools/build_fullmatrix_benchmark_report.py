@@ -186,9 +186,11 @@ def _parse_opv2v_filename(path, run_id):
         return None
     remainder = stem[pos + len(marker) :]
 
-    m = re.match(r"^(camera|lidar)_(noise10|drop20)_single$", remainder)
+    # single baseline was historically named "..._single"; newer runs may use
+    # "..._single_ego_only" to make the semantics explicit (still the same curve).
+    m = re.match(r"^(camera|lidar)_(noise10|drop20)_(single|single_ego_only)$", remainder)
     if m:
-        mod, sweep = m.groups()
+        mod, sweep, _single_name = m.groups()
         return (mod, sweep, "single", "bounds", "0.0")
 
     m = re.match(r"^(camera|lidar)_(noise10|drop20)_(baseline|oracle)_n([0-9.]+)$", remainder)

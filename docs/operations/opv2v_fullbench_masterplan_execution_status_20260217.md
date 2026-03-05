@@ -3,6 +3,20 @@
 Plan doc:
 - `docs/operations/opv2v_fullbench_masterplan.md`
 
+## Update（2026-02-24）：本文件仅保留为历史执行记录（不再作为 canonical 依据）
+
+随着 2026-02-23~02-24 的统一条件审计与修复（comm-range gating 语义冻结、online payload/no-op 排查、HKUST/lidar_reg wiring 修复等），
+我们已经确认：
+
+- `opv2v_autopilot_full_20260216_auto3_a1` 使用 `comm_range_gating=auto`，在 online runtime 下存在 baseline vs method gating 语义漂移风险；
+- 同 run_id 出现过 mixed-env + mid-run 修复混写；
+- init/no-init/HKUST 追加矩阵并未完成（run_state/task_summary 可证）；
+- 大量旧 YAML schema 不含 `pose_provider_applied_count`，无法对 no-op 做严格 gate。
+
+因此：本文件不再作为“最终可引用 benchmark”的证据；canonical 版本请以 unified fullbench 合同为准：
+- `docs/operations/opv2v_unified_fullbench_plan_20260223.md`
+- `docs/operations/benchmark_pending_runs_and_plan_20260224.md`
+
 Trusted run (main result):
 - run dir: `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/`
 - run id: `opv2v_autopilot_full_20260216_auto3_a1`
@@ -134,7 +148,7 @@ G10 Cost / Stop-Loss Gate — **PARTIAL**
 
 必须同时满足：
 - completion: `run_state.jsonl` ended=scope_tasks 且 code=0 全通过
-- sanity: baseline 随噪声下降；oracle 上界近似水平；single(comm_range=0, noise=0) 合理
+- sanity: baseline 随噪声下降；oracle 上界近似水平；single 用 **canonical** `single_ego_only=--force-ego-input-only (noise=0)`（禁止再用 legacy `comm_range=0(single_comm0)`；见 `docs/operations/benchmark_semantics.md`）
 - integrity: stage1 cache 2170 samples 且 contiguous；所有 task 使用同一 cache（同模态内）
 - semantics: config_snapshot.json 固化 `solver_backend/runtime_mode/pose_source`
 - full-GPU: `cpu_fallback_count==0`（当前已由 `20260220_fullgpu*` gate 产物满足）

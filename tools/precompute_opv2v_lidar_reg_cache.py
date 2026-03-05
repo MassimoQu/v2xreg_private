@@ -27,6 +27,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import hashlib
+
 import numpy as np
 
 # Imported from HEAL via PYTHONPATH=$PWD/HEAL
@@ -228,8 +230,11 @@ def main() -> None:
             cav_points = mask_ego_points(np.asarray(cav_points))
 
             # Keep per-pair downsampling deterministic across resume / loop order changes.
+            # NOTE: Don't use Python's built-in hash() here because it is salted per process by default.
             try:
-                seed_val = (int(args.seed) * 1000003 + int(idx) * 97 + hash(str(ego_id)) * 3 + hash(str(cav_id))) & 0xFFFFFFFF
+                pair_sig = f"{idx}|{ego_id}|{cav_id}".encode("utf-8", errors="ignore")
+                pair_hash = int(hashlib.md5(pair_sig).hexdigest()[:8], 16)
+                seed_val = (int(args.seed) * 1000003 + int(idx) * 97 + int(pair_hash)) & 0xFFFFFFFF
                 np.random.seed(int(seed_val))
             except Exception:
                 pass

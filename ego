@@ -1,0 +1,11 @@
+docs/operations/heal_detection_status.md:47:  --require-cav-substrings vehicle infrastructure
+docs/operations/heal_detection_status.md:49:   - `--require-cav-substrings` 会强制 `cav_id_list` 同时包含 `vehicle` 与 `infrastructure`，可过滤仍然沿用单端检测模型的“伪双端”样本。
+docs/operations/heal_detection_status.md:100:       --require-cav-substrings vehicle infrastructure
+docs/operations/heal_detection_status.md:122:| 检测缓存 | `python tools/heal_stage1_to_detection_cache.py --stage1 data/DAIR-V2X/detected/veh_rsu_dual --output data/DAIR-V2X/detected/veh_rsu_dual_detection_cache.json --require-two-cavs --require-cav-substrings vehicle infrastructure`；随后用 `tools/summarize_detection_cache.py --path data/DAIR-V2X/detected/veh_rsu_dual_detection_cache.json` 补齐 1,800 个索引。统计：1763 帧具备双端检测，路端平均 17.92 个框（2–41），车端 11.58 个框（1–38），共享最少框均值 11.01。 |
+docs/operations/heal_single_agent_report.md:43:2. `~/miniconda3/bin/python tools/heal_stage1_to_detection_cache.py --stage1 data/DAIR-V2X/detected/veh_rsu_dual_ft --output data/DAIR-V2X/detected/veh_rsu_dual_ft_detection_cache.json --require-two-cavs --require-cav-substrings vehicle infrastructure`。脚本会保留帧 ID，并为缺失样本写入 `null`，索引 0–1799 固定对应 DAIR test split。
+HEAL/opencood/tools/test_pose_provider_runtime.py:388:    # The synthetic payload encodes cav->ego translation (+2m on x).
+HEAL/opencood/tools/train_v2vloc_dcp.py:7:  - We simulate a noisy initial cav->ego transform: T_init = T_noise @ T_gt
+HEAL/opencood/tools/train_v2vloc_dcp.py:170:            T_all = get_relative_transformation(poses_clean)  # (L,4,4) cav->ego
+HEAL/opencood/extrinsics/pose_correction/stage1_lidar_registration.py:227:            # the relative transform we want (cav->ego) for pose correction.
+tools/heal_stage1_to_detection_cache.py:315:        '--require-cav-substrings',
+tools/precompute_opv2v_lidar_reg_cache.py:21:  - Transforms are cav->ego in LiDAR coordinates (dst <- src), matching Stage1LidarRegPoseCorrector.

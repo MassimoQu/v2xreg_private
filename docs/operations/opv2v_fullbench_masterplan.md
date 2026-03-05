@@ -67,7 +67,7 @@
 - cbm (best + stable)
 - baseline (no correction)
 - oracle (GT pose)
-- single (comm_range=0)
+- single (ego-only; `--force-ego-input-only`, noise=0；保持 comm_range/GT 不变，禁止 comm_range=0 当 single)
 
 ## 4. 执行计划（可复现步骤）
 
@@ -82,10 +82,10 @@
 
 1.5) 先做 smoke（小样本全链路）  
    - 目的：先验证语义/配置，不直接烧 full run  
-   - 建议命令：`SMOKE=1 SOLVER_BACKEND=online_box RUNTIME_MODE=register_and_fuse ./scripts/run_opv2v_fullbench.sh`  
+   - 建议命令：`SMOKE=1 SOLVER_BACKEND=online_box RUNTIME_MODE=register_and_fuse ./scripts/run_opv2v_fullbench.sh --comm-range-gating noisy`  
    - smoke 通过条件（最小 gate）：
      - `run_state.jsonl` 中 smoke 任务 `end code=0`
-     - 非 oracle 方法 `pose_solver.applied` 不是全 0
+     - 非 oracle 方法的 “applied 信号”不是全 0（offline_map 看 `pose_solver.applied`；online_box 看 `pose_provider_applied_count`）
      - baseline AP50 不在 `1e-7` 量级
    - smoke 失败就止损，不得进入 fullbench
 

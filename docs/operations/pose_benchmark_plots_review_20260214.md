@@ -8,11 +8,14 @@ Last updated: 2026-02-14
 
 给出“为什么看起来平 / 为什么会下降 / 设置差异导致的差距”的**证据链**（从产物 -> YAML 数字 -> 代码逻辑）。
 
+> NOTE（2026-03-01）：本文复盘的是一条 **offline_map/per-CAV sweep** 口径（会在 oracle/offline solver 路径关闭 detection eval 的噪声注入），因此“oracle 平线”在这里是预期现象。  
+> 在 unified **online_box**（端到端）且 `comm-range-gating=noisy` 的 system benchmark 下，oracle 是否严格水平取决于 comm-range pruning 是否固定 agent/GT set（见 `docs/operations/benchmark_semantics.md`）。
+
 ---
 
 ## 0. 先给结论（你最关心的点）
 
-1) **oracle 线是平的不是 bug**：oracle 用 GT 外参，`inference_w_noise.py` 会把 detection eval 的 noise 注入关掉（见第 1.1 节证据），所以 AP50 对噪声轴不敏感，必然是水平线。
+1) **oracle 通常是上界**：在本文这条 offline_map/per-CAV sweep 口径下，`inference_w_noise.py` 会把 detection eval 的 noise 注入关掉（见第 1.1 节证据），所以 oracle 对噪声轴不敏感，表现为水平线是预期现象；但这不是“所有 benchmark 的硬条件”（参见 `benchmark_semantics`）。
 2) **baseline 并不平**：两组图里 baseline 都随噪声下降，只是“绝对 AP 下降幅度”较小，肉眼看像平。我们从 YAML 直接列出 `ap50` 序列 + Δ（见第 1.2/2.2 节证据）。
 3) **无初值（initfree）曲线下降是合理的**：噪声越大 -> 特征对齐越错 -> coop 融合越伤 -> AP 下降；initfree 方法能把下降“压平”一些，但相机整体压不住到 oracle（见第 1.3/2.3）。
 4) **stable 在这类 sweep 下经常更差也合理**：当前 sweep 的噪声是逐帧随机注入（且 dropout 会引入“pose 冻结”），stable 的 EMA/步长限制对这种非平稳噪声可能引入滞后/欠修正，导致比 baseline/single 还差（见第 1.4/2.4）。
@@ -39,7 +42,7 @@ Last updated: 2026-02-14
 原因（代码证据）：
 - `HEAL/opencood/tools/inference_w_noise.py:805` 会在 offline_map pose solver 路径“求解外参之后”把 detection eval 的 `noise_setting` 设为 `add_noise=False`（只评测修正后的干净外参）。
 - `HEAL/opencood/tools/inference_w_noise.py:820` 会在 oracle(=GT) 路径把 detection eval 的 `noise_setting` 设为 `add_noise=False`（保持几何为 GT）。
-  - 所以 oracle/bounds 曲线必然水平，并且数值应接近“上界”。
+  - 因此在本文这组 offline_map plots 里 oracle/bounds 曲线会呈现水平线，并且数值应接近“上界”。
 
 ### 1.2 baseline 不是平线（证据链）
 
@@ -86,9 +89,10 @@ baseline YAML：
 - freealign_stable / cbm_stable 的 AP50 全程在 0.02~0.04，已经**明显低于** baseline，且接近/低于 single（图中黑线 ~0.052），说明稳定更新在这里基本是“把外参改坏了/或融合被严重破坏”，这时候曲线形状本身意义不大。
 - v2xregpp_stable 的曲线在相机上非常陡，是典型“EMA/步长限制 + i.i.d 噪声”不匹配的症状：噪声每帧随机变化，stable 的平滑会产生滞后，导致误差累积，融合越来越错位 -> AP 迅速掉。
 
-附：single（comm_range=0）为什么几乎水平？
+附：legacy single（comm_range=0 / single_comm0）为什么几乎水平？（不要当作 canonical single）
 - sweep10m camera single YAML `ap50` 完全常数（证据）：`AP030507_none_sweep10m_camera_single_comm0_full.yaml` 的 AP50 10 个点完全相同 `0.051897...`
 - 原因：comm=0 下基本退化成“只用 ego”，`noise_target=non-ego` 时外参噪声对 ego 的贡献很小/无；所以对噪声轴不敏感。
+ - canonical single 请用 `single_ego_only=--force-ego-input-only`（保持 comm_range/GT set 不变），见 `docs/operations/benchmark_semantics.md`。
 
 ---
 
@@ -164,7 +168,7 @@ vips_stable ap50=[0.2937, 0.2990, 0.2483, 0.2466, 0.2455, 0.2441, 0.2417, 0.2978
 
 建议你以后看图时用 3 个 sanity checks 判断“是不是正常的 benchmark”：
 
-1) **oracle 必须最高且水平**（因为 GT 外参不应该受噪声影响）。
+1) **oracle 通常最高**；是否“严格水平”取决于你是否冻结了 comm-range pruning 语义以及是否保留噪声注入（参见 `benchmark_semantics`）。
 2) **baseline 应随噪声下降**（否则说明噪声没注入进 detection eval）。
 3) **single 可能比 baseline 高**（当 coop 在错外参下伤害了融合，这是正常现象；它是你需要的“及时止损下界”）。
 

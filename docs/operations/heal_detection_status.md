@@ -10,6 +10,7 @@
    - `tools/heal_stage1_to_detection_cache.py` 可把 Stage1 导出转换为 V2I-Calib++ 的 detection cache；`configs/dair/detection/pipeline_detection.yaml` 指向该缓存，并设置 `use_detection=true`。
 2. **实验设置**  
    - **检测导出**：暂用 HEAL stage1 点云模型在车端/路端点云上分别推理（路端缺少专用模型，因此仍是同一模型复用），`single_agent_comm_range=0`，强制不同 ego。  
+     - 这里的 `single_agent_comm_range=0` 只是 `pose_graph_pre_calc.py` 的导出/过滤参数（用于“分端导出”），**不是** core benchmark 里的 canonical `single` 定义；benchmark 语义见 `docs/operations/benchmark_semantics.md`。  
    - **检测缓存**：`data/DAIR-V2X/detected/heal_stage1_dual_detection_cache.json`，共 1,789 帧双端检测，平均车端 17.4 个框、路端 11.5 个框。  
    - **标定**：`python tools/run_calibration.py --config configs/dair/detection/pipeline_detection.yaml`，`max_samples=1800`，输出目录 `outputs/heal_detection/`。
 3. **结果与分析**  

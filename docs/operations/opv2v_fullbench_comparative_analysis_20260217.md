@@ -2,6 +2,11 @@
 
 Last updated: 2026-02-17
 
+> NOTE (2026-03-01): This document analyzes a **legacy** OPV2V fullbench run (`20260216_auto3`) that used
+> `comm_range_gating=auto` under online runtime and included the legacy `single_comm0` definition.
+> Those semantics are **not** the frozen/canonical core benchmark condition. Use it as historical analysis only.
+> Canonical semantics: `docs/operations/benchmark_semantics.md`.
+
 目标：把 **这次（online/fullbench, autopilot auto3）** 的结果，和 **前面几次 OPV2V fullbench** 以及你点名的 **离线 DAIR pose sweep/dropout** 做一次“证据链式”的对照复盘，给出论文可用的观察点 + 可执行的下一步研究/实验机会。
 
 ---

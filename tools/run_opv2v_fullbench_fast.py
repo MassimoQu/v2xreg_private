@@ -30,7 +30,10 @@ DEFAULT_CAMERA_STAGE1 = (
     / "stage1_boxes.json"
 )
 DEFAULT_LIDAR_STAGE1 = ROOT / "data" / "OPV2V" / "detected" / "opv2v_lidar_v2xvit_stage1" / "test" / "stage1_boxes.json"
-DEFAULT_V2XREGPP_CONFIG = ROOT / "configs" / "pipeline_midfusion_detection_occ.yaml"
+DEFAULT_V2XREGPP_CONFIG = ROOT / "configs" / "dair" / "midfusion" / "pipeline_midfusion_detection_occ.yaml"
+if not DEFAULT_V2XREGPP_CONFIG.exists():
+    # Backward-compat path used by older notes/scripts.
+    DEFAULT_V2XREGPP_CONFIG = ROOT / "configs" / "pipeline_midfusion_detection_occ.yaml"
 DEFAULT_OPV2V_TEST_SAMPLES = 2170
 
 METHODS = {
@@ -177,6 +180,7 @@ def build_common_args(
     rot: str,
     num_workers: int,
     dropout: Optional[float],
+    comm_range_override: int,
     *,
     solver_backend: str,
     runtime_mode: str,
@@ -190,11 +194,14 @@ def build_common_args(
     args = [
         f"--model_dir {model_dir}",
         "--fusion_method intermediate",
+        f"--comm-range-override {int(comm_range_override)}",
         f"--pos-std-list {pos}",
         f"--rot-std-list {rot}",
         "--sweep-mode paired",
         "--noise-target non-ego",
         f"--num-workers {num_workers}",
+        # Avoid generating massive vis_*/bev_*.png outputs during benchmark sweeps.
+        "--save_vis_interval 100000000",
         "--log-interval 200",
         "--pose-timing",
         "--pose-device cuda",
@@ -239,6 +246,11 @@ def build_tasks(
     runtime_mode: str,
     pose_source: str,
     comm_range_gating: str,
+    comm_range_override: int,
+    pose_compare_distance_threshold: float,
+    pose_current_precision_threshold: float,
+    pose_min_precision_improvement: float,
+    pose_min_matched_improvement: int,
     max_eval_samples: Optional[int],
     deterministic_strict: bool,
     online_gpu_stage1_solver: bool,
@@ -253,6 +265,8 @@ def build_tasks(
     sweeps: Sequence[str] = ("noise10", "drop20"),
 ) -> List[Task]:
     tasks: List[Task] = []
+    # Memoize cache meta reads (avoid re-parsing JSON per noise/method/strategy).
+    cache_meta_by_path: Dict[Path, dict] = {}
 
     if len(noise_list) != len(rot_list):
         raise ValueError("noise_list and rot_list must have same length")
@@ -277,6 +291,45 @@ def build_tasks(
         # Matches inference_w_noise default (when global_method==auto and use_fgr=False).
         return "ransac"
 
+    def _load_cache_meta(path: Path) -> dict:
+        if path in cache_meta_by_path:
+            return cache_meta_by_path[path]
+        try:
+            obj = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+            meta = obj.get("meta") if isinstance(obj, dict) else None
+            meta = meta if isinstance(meta, dict) else {}
+        except Exception:
+            meta = {}
+        cache_meta_by_path[path] = meta
+        return meta
+
+    def _require_full_cache(path: Path, *, global_method: str) -> None:
+        """
+        If we are evaluating the full OPV2V test split (i.e., max_eval_samples is None),
+        refuse caches that were explicitly generated with --max-samples > 0.
+
+        Otherwise the benchmark may silently fall back to on-the-fly registration for missing keys
+        (slow + unintended), or mix cached vs uncached pairs (hard to reason about).
+        """
+        full_eval = max_eval_samples is None
+        if not full_eval:
+            return
+        meta = _load_cache_meta(path)
+        if "max_samples" not in meta:
+            raise SystemExit(
+                f"[PRECHECK] lidar-reg cache missing meta.max_samples: {path} (global_method={global_method}). "
+                "Refuse for full eval; regenerate cache with tools/precompute_opv2v_lidar_reg_cache.py"
+            )
+        try:
+            max_samples = int(meta.get("max_samples") or 0)
+        except Exception:
+            max_samples = -1
+        if max_samples != 0:
+            raise SystemExit(
+                f"[PRECHECK] lidar-reg cache appears partial (meta.max_samples={max_samples}): {path} (global_method={global_method}). "
+                "Refuse for full eval; regenerate with --max-samples 0."
+            )
+
     modality_specs = {
         "camera": (camera_model, camera_stage1),
         "lidar": (lidar_model, lidar_stage1),
@@ -297,6 +350,7 @@ def build_tasks(
                     rot,
                     num_workers,
                     use_dropout,
+                    comm_range_override,
                     solver_backend=solver_backend,
                     runtime_mode=runtime_mode,
                     pose_source=pose_source,
@@ -324,6 +378,14 @@ def build_tasks(
                     # best-of
                     note = f"_{run_id}_{modality}_{sweep}_{method_name}_best_n{noise}"
                     args = [f"--pose-correction {meta[initfree]}", "--pose-compare-current", f"--note {note}"]
+                    args.extend(
+                        [
+                            f"--pose-compare-distance-threshold {float(pose_compare_distance_threshold)}",
+                            f"--pose-current-precision-threshold {float(pose_current_precision_threshold)}",
+                            f"--pose-min-precision-improvement {float(pose_min_precision_improvement)}",
+                            f"--pose-min-matched-improvement {int(pose_min_matched_improvement)}",
+                        ]
+                    )
                     if meta.get("needs_stage1"):
                         args.append(f"--stage1-result {stage1}")
                     if meta.get("family") == "v2xregpp":
@@ -334,6 +396,8 @@ def build_tasks(
                         cache_path = (Path(lidar_reg_cache_dir) / f"opv2v_test_{gm}.json").resolve()
                         if require_lidar_reg_cache and not cache_path.exists():
                             raise SystemExit(f"[PRECHECK] Missing lidar-reg cache: {cache_path}")
+                        if require_lidar_reg_cache and cache_path.exists():
+                            _require_full_cache(cache_path, global_method=gm)
                         if cache_path.exists():
                             args.append(f"--lidar-reg-cache {cache_path}")
                     cmd = build_cmd(python_bin, common + [" ".join(args)])
@@ -352,6 +416,8 @@ def build_tasks(
                         cache_path = (Path(lidar_reg_cache_dir) / f"opv2v_test_{gm}.json").resolve()
                         if require_lidar_reg_cache and not cache_path.exists():
                             raise SystemExit(f"[PRECHECK] Missing lidar-reg cache: {cache_path}")
+                        if require_lidar_reg_cache and cache_path.exists():
+                            _require_full_cache(cache_path, global_method=gm)
                         if cache_path.exists():
                             args.append(f"--lidar-reg-cache {cache_path}")
                     cmd = build_cmd(python_bin, common + [" ".join(args)])
@@ -361,17 +427,22 @@ def build_tasks(
             common = [
                 f"--model_dir {model_dir}",
                 "--fusion_method intermediate",
-                "--comm-range-override 0",
+                f"--comm-range-override {int(comm_range_override)}",
                 "--pos-std-list 0",
                 "--rot-std-list 0",
                 "--sweep-mode paired",
                 "--noise-target non-ego",
                 f"--num-workers {num_workers}",
+                "--save_vis_interval 100000000",
                 "--log-interval 200",
                 "--pose-timing",
                 "--pose-device cuda",
                 f"--solver-backend {solver_backend}",
                 f"--pose-source {pose_source}",
+                # Fair single-agent baseline: keep the same comm_range/labels as cooperative runs,
+                # but force the forward pass to use only ego inputs (no comm). This avoids the
+                # "comm_range=0 makes the task easier" confound where single can look better than oracle.
+                "--force-ego-input-only",
             ]
             if comm_range_gating and str(comm_range_gating).strip().lower() != "auto":
                 common.append(f"--comm-range-gating {comm_range_gating}")
@@ -388,7 +459,7 @@ def build_tasks(
             if max_eval_samples is not None and int(max_eval_samples) > 0:
                 common.append(f"--max-eval-samples {int(max_eval_samples)}")
             if include_single:
-                note = f"_{run_id}_{modality}_{sweep}_single"
+                note = f"_{run_id}_{modality}_{sweep}_single_ego_only"
                 cmd = build_cmd(python_bin, common + [f"--pose-correction none --note {note}"])
                 add_task(modality, sweep, "single", "bounds", normalize_noise("0"), cmd)
 
@@ -466,6 +537,11 @@ def write_config_snapshot(out_dir: Path, args: argparse.Namespace, noise_list: S
         "gpus": args.gpus,
         "max_per_gpu": args.max_per_gpu,
         "num_workers": args.num_workers,
+        "fusion_method": "intermediate",
+        "comm_range_override": int(getattr(args, "comm_range_override", 0)),
+        "sweep_mode": "paired",
+        "noise_target": "non-ego",
+        "save_vis_interval": 100000000,
         "modalities": args.modalities,
         "sweeps": args.sweeps,
         "noise_list": list(noise_list),
@@ -486,6 +562,10 @@ def write_config_snapshot(out_dir: Path, args: argparse.Namespace, noise_list: S
         "solver_backend": str(getattr(args, "solver_backend", "offline_map")),
         "runtime_mode": str(getattr(args, "runtime_mode", "")),
         "pose_source": str(getattr(args, "pose_source", "noisy_input")),
+        "pose_compare_distance_threshold": float(getattr(args, "pose_compare_distance_threshold", 3.0)),
+        "pose_current_precision_threshold": float(getattr(args, "pose_current_precision_threshold", 1.8)),
+        "pose_min_precision_improvement": float(getattr(args, "pose_min_precision_improvement", 0.0)),
+        "pose_min_matched_improvement": int(getattr(args, "pose_min_matched_improvement", 0)),
         "comm_range_gating": str(getattr(args, "comm_range_gating", "auto")),
         "deterministic_strict": bool(getattr(args, "deterministic_strict", False)),
         "online_gpu_stage1_solver": bool(getattr(args, "online_gpu_stage1_solver", False)),
@@ -497,6 +577,11 @@ def write_config_snapshot(out_dir: Path, args: argparse.Namespace, noise_list: S
         "skip_oracle": bool(getattr(args, "skip_oracle", False)),
         "skip_single": bool(getattr(args, "skip_single", False)),
     }
+    # Record GPU allocation context for traceability (e.g. Slurm remapping).
+    try:
+        cfg["parent_cuda_visible_devices"] = str(os.environ.get("CUDA_VISIBLE_DEVICES", "") or "")
+    except Exception:
+        pass
     # Include git provenance for evidence-grade comparisons.
     try:
         cfg["git_commit"] = (
@@ -538,7 +623,7 @@ def _resolve_stage1_path(path: Path) -> Path:
     return path
 
 
-def _validate_stage1_cache(path: Path, *, expected_samples: int, label: str) -> None:
+def _validate_stage1_cache(path: Path, *, expected_samples: int, label: str) -> dict:
     path = _resolve_stage1_path(path)
     if not path.exists():
         raise SystemExit(f"[PRECHECK] Missing {label} stage1 cache: {path}")
@@ -574,6 +659,48 @@ def _validate_stage1_cache(path: Path, *, expected_samples: int, label: str) -> 
     if mismatch:
         raise SystemExit(
             f"[PRECHECK] {label} stage1 cache has len(cav_id_list)!=len(pred_corner3d_np_list) for {mismatch}/{len(obj)} samples: {path}"
+        )
+    return obj
+
+
+def _head_keys(obj: dict, n: int) -> List[str]:
+    keys = []
+    for k in obj.keys():
+        ks = str(k)
+        try:
+            keys.append((int(ks), ks))
+        except Exception:
+            # Keep non-int keys after int keys.
+            keys.append((10**18, ks))
+    keys.sort(key=lambda x: (x[0], x[1]))
+    return [ks for _, ks in keys[: max(1, int(n))]]
+
+
+def _validate_stage1_semantics(obj: dict, *, label: str, samples: int, min_valid_samples: int) -> None:
+    try:
+        # NOTE: This script is sometimes launched with an explicit path
+        # (e.g. `python /abs/path/to/tools/run_opv2v_fullbench_fast.py`) and a
+        # working directory that is *not* the repo root. In that case, the repo
+        # root may be missing from `sys.path`, so `tools.*` imports fail.
+        # Fall back to importing from the script directory (which *is* on
+        # `sys.path` as `sys.path[0]`).
+        try:
+            from tools.validate_stage1_semantics import check_stage1_semantics_dict
+        except Exception:
+            from validate_stage1_semantics import check_stage1_semantics_dict
+    except Exception as e:
+        raise SystemExit(f"[PRECHECK] Failed to import semantic stage1 validator: {e}")
+    keys = _head_keys(obj, int(samples))
+    summary = check_stage1_semantics_dict(obj, keys=keys, min_valid_samples=int(min_valid_samples))
+    if not summary.ok:
+        raise SystemExit(
+            "[PRECHECK] {} stage1 semantic check failed: {} (valid_samples={} inverted_rate={:.3f} ratio_rel_over_id={:.3f})".format(
+                label,
+                summary.note,
+                summary.valid_samples,
+                summary.inverted_rate,
+                summary.match_ratio_rel_over_id,
+            )
         )
 
 
@@ -619,6 +746,19 @@ def _pose_override_is_zero(model_dir: Path) -> bool:
                 mode = m.group(1).strip().lower()
         return bool(enabled) and str(mode or "").lower() == "zero"
     return False
+
+
+def _git_is_dirty(repo: Path) -> Optional[bool]:
+    """
+    Returns:
+      - True/False if git status can be queried
+      - None if repo is not a git worktree or git is unavailable
+    """
+    try:
+        out = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain=v1"], text=True)
+        return bool(out.strip())
+    except Exception:
+        return None
 
 
 def collect_done_from_state(state_path: Path) -> set:
@@ -697,12 +837,28 @@ def schedule_tasks(tasks: List[Task], gpus: List[int], max_per_gpu: int, out_dir
     gpu_slots: Dict[int, List[subprocess.Popen]] = {g: [] for g in gpus}
     queue = deque(tasks)
     state_path = out_dir / "run_state.jsonl"
+    # Map "GPU slot indices" (args.gpus) to actual CUDA_VISIBLE_DEVICES entries
+    # provided by the parent environment (e.g. Slurm). This prevents accidentally
+    # running on GPUs outside the allocation when Slurm remaps visible devices.
+    parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    parent_visible_list = [v.strip() for v in str(parent_visible).split(",") if v.strip()]
+    cuda_visible_map: Dict[int, str] = {}
+    if parent_visible_list:
+        for idx in gpus:
+            if 0 <= int(idx) < len(parent_visible_list):
+                cuda_visible_map[int(idx)] = parent_visible_list[int(idx)]
 
     def launch(task: Task, gpu: int):
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        # NOTE: `gpu` is a slot index. Resolve it to a real visible device string
+        # (can be numeric or UUID) when the parent exports CUDA_VISIBLE_DEVICES.
+        env["CUDA_VISIBLE_DEVICES"] = cuda_visible_map.get(int(gpu), str(gpu))
         env["PYTHONPATH"] = str(ROOT / "HEAL")
         env["OPENCOOD_VOXEL_GPU"] = "1"
+        env.setdefault("OMP_NUM_THREADS", "1")
+        env.setdefault("MKL_NUM_THREADS", "1")
+        env.setdefault("OPENBLAS_NUM_THREADS", "1")
+        env.setdefault("NUMEXPR_NUM_THREADS", "1")
         task.log_path.parent.mkdir(parents=True, exist_ok=True)
         # Never silently truncate historical logs unless explicitly requested.
         mode = "a" if log_mode == "append" else "w"
@@ -744,6 +900,36 @@ def schedule_tasks(tasks: List[Task], gpus: List[int], max_per_gpu: int, out_dir
         reap()
 
 
+def collect_final_codes(state_path: Path) -> Dict[Tuple[str, str, str, str, str], int]:
+    """
+    Return the final exit code per task key using the last `end` event for that task.
+
+    `run_state.jsonl` is append-only and chronological, so "last seen" is the final status.
+    """
+    final: Dict[Tuple[str, str, str, str, str], int] = {}
+    if not state_path.exists():
+        return final
+    for line in state_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if obj.get("event") != "end":
+            continue
+        key = obj.get("task")
+        if not isinstance(key, list) or len(key) != 5:
+            continue
+        code = obj.get("code")
+        try:
+            code_i = int(code)
+        except Exception:
+            code_i = 999
+        final[tuple(str(x) for x in key)] = code_i
+    return final
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run OPV2V full benchmark with noise-split scheduling.")
     parser.add_argument("--run-id", default=None)
@@ -764,7 +950,11 @@ def main():
     )
     parser.add_argument("--skip-baseline", action="store_true", help="Skip baseline (pose-correction=none) tasks.")
     parser.add_argument("--skip-oracle", action="store_true", help="Skip oracle (pose-correction=oracle_gt) tasks.")
-    parser.add_argument("--skip-single", action="store_true", help="Skip single (comm_range=0) tasks.")
+    parser.add_argument(
+        "--skip-single",
+        action="store_true",
+        help="Skip canonical single-agent bounds (single_ego_only via --force-ego-input-only, noise=0).",
+    )
     parser.add_argument(
         "--max-eval-samples",
         type=int,
@@ -809,6 +999,16 @@ def main():
         help="Freeze comm-range pruning semantics in inference_w_noise.py (recommended to avoid cross-method confounds).",
     )
     parser.add_argument(
+        "--comm-range-override",
+        type=int,
+        default=70,
+        help="Override comm_range passed to inference_w_noise.py (OPV2V canonical: 70).",
+    )
+    parser.add_argument("--pose-compare-distance-threshold", type=float, default=3.0)
+    parser.add_argument("--pose-current-precision-threshold", type=float, default=1.8)
+    parser.add_argument("--pose-min-precision-improvement", type=float, default=0.0)
+    parser.add_argument("--pose-min-matched-improvement", type=int, default=0)
+    parser.add_argument(
         "--deterministic-strict",
         action="store_true",
         help="Forward --deterministic-strict to inference_w_noise.py for stricter parity runs.",
@@ -850,6 +1050,28 @@ def main():
         action="store_true",
         help="Skip stage1/model config preflight checks (NOT recommended; can waste GPU days).",
     )
+    parser.add_argument(
+        "--skip-stage1-semantic-check",
+        action="store_true",
+        help="Skip stage1 semantic (frame convention) check. NOT recommended for new/unknown stage1 caches.",
+    )
+    parser.add_argument(
+        "--stage1-semantic-samples",
+        type=int,
+        default=50,
+        help="Number of samples (head) to use for stage1 semantic check.",
+    )
+    parser.add_argument(
+        "--stage1-semantic-min-valid",
+        type=int,
+        default=10,
+        help="Minimum valid samples required by stage1 semantic check.",
+    )
+    parser.add_argument(
+        "--require-clean-git",
+        action="store_true",
+        help="Fail preflight if the main repo or HEAL submodule is git-dirty (recommended for canonical numbers).",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -872,13 +1094,38 @@ def main():
 
     # Hard preflight gates: stage1 integrity + pose_override mismatch.
     if not args.skip_preflight:
+        # Semantics freeze: auto gating can silently change comm-range pruning semantics across methods
+        # under online runtimes. Require an explicit setting for evidence-grade benchmarks.
+        if str(args.solver_backend).strip().lower() != "offline_map" and str(args.comm_range_gating).strip().lower() == "auto":
+            raise SystemExit(
+                "[PRECHECK] comm-range-gating=auto with an online solver backend can introduce cross-method confounds. "
+                "Pass --comm-range-gating noisy (recommended) or clean to freeze semantics."
+            )
+
         expected_samples = int(args.stage1_expected_samples)
         needs_camera_stage1 = any(METHODS[m].get("needs_stage1") for m in methods)
         needs_lidar_stage1 = any(METHODS[m].get("needs_stage1") for m in methods)
+        cam_obj = None
+        lidar_obj = None
         if "camera" in modalities and needs_camera_stage1:
-            _validate_stage1_cache(args.camera_stage1, expected_samples=expected_samples, label="camera")
+            cam_obj = _validate_stage1_cache(args.camera_stage1, expected_samples=expected_samples, label="camera")
         if "lidar" in modalities and needs_lidar_stage1:
-            _validate_stage1_cache(args.lidar_stage1, expected_samples=expected_samples, label="lidar")
+            lidar_obj = _validate_stage1_cache(args.lidar_stage1, expected_samples=expected_samples, label="lidar")
+        if not bool(args.skip_stage1_semantic_check):
+            if cam_obj is not None:
+                _validate_stage1_semantics(
+                    cam_obj,
+                    label="camera",
+                    samples=int(args.stage1_semantic_samples),
+                    min_valid_samples=int(args.stage1_semantic_min_valid),
+                )
+            if lidar_obj is not None:
+                _validate_stage1_semantics(
+                    lidar_obj,
+                    label="lidar",
+                    samples=int(args.stage1_semantic_samples),
+                    min_valid_samples=int(args.stage1_semantic_min_valid),
+                )
 
         # For pose-noise robustness, pose_override=zero cancels the noise sweep. Require an explicit override.
         if "lidar" in modalities and _pose_override_is_zero(args.lidar_model) and not args.allow_pose_override:
@@ -887,6 +1134,15 @@ def main():
                 "this cancels pose-noise sweeps and makes baseline curves flat. "
                 "Use a non-noextr model dir OR pass --allow-pose-override for an explicit no-extr suite."
             )
+
+        if bool(getattr(args, "require_clean_git", False)):
+            main_dirty = _git_is_dirty(ROOT)
+            heal_dirty = _git_is_dirty(ROOT / HEAL)
+            if main_dirty is True or heal_dirty is True:
+                raise SystemExit(
+                    "[PRECHECK] git worktree is dirty (main or HEAL). Commit/stash changes before running canonical benchmarks, "
+                    "or remove --require-clean-git."
+                )
 
     write_config_snapshot(out_dir, args, noise_list, rot_list)
 
@@ -927,6 +1183,11 @@ def main():
         runtime_mode=args.runtime_mode,
         pose_source=args.pose_source,
         comm_range_gating=args.comm_range_gating,
+        comm_range_override=int(args.comm_range_override),
+        pose_compare_distance_threshold=float(args.pose_compare_distance_threshold),
+        pose_current_precision_threshold=float(args.pose_current_precision_threshold),
+        pose_min_precision_improvement=float(args.pose_min_precision_improvement),
+        pose_min_matched_improvement=int(args.pose_min_matched_improvement),
         max_eval_samples=args.max_eval_samples if int(args.max_eval_samples) > 0 else None,
         deterministic_strict=bool(getattr(args, "deterministic_strict", False)),
         online_gpu_stage1_solver=bool(getattr(args, "online_gpu_stage1_solver", False)),
@@ -964,6 +1225,26 @@ def main():
         return
 
     schedule_tasks(pending, gpus=gpus, max_per_gpu=args.max_per_gpu, out_dir=out_dir, log_mode=args.log_mode)
+
+    # Exit non-zero if any in-scope task is missing or has a non-zero final code.
+    # This makes Slurm dependency chains reliable (afterok should not trigger on partial/failed runs).
+    final_codes = collect_final_codes(out_dir / "run_state.jsonl")
+    missing = sorted(scope_keys - set(final_codes.keys()))
+    failed = sorted([k for k, c in final_codes.items() if k in scope_keys and int(c) != 0])
+    final_summary = dict(summary)
+    final_summary.update(
+        {
+            "final_done_tasks": len([k for k, c in final_codes.items() if k in scope_keys and int(c) == 0]),
+            "final_failed_tasks": len(failed),
+            "final_missing_tasks": len(missing),
+        }
+    )
+    (out_dir / "task_summary_final.json").write_text(json.dumps(final_summary, indent=2))
+    if missing or failed:
+        raise SystemExit(
+            f"[FAIL] Run incomplete: missing={len(missing)} failed={len(failed)}. "
+            f"See {out_dir/'run_state.jsonl'} and {out_dir/'task_summary_final.json'}."
+        )
 
 
 if __name__ == "__main__":

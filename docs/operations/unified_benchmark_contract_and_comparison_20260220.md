@@ -2,6 +2,25 @@
 
 更新: 2026-02-20 23:20
 
+## Update（2026-02-24）：OPV2V 部分不再可作为 canonical numbers（仅保留历史参考）
+
+从 2026-02-23~02-24 的审计与修复进展来看，本文件里的 OPV2V 结果源
+`outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/` 存在以下问题：
+
+- **合同未冻结**：`comm_range_gating=auto`（online runtime 下存在语义漂移风险），不满足“最新统一 benchmark 条件”。
+- **mixed-version / mixed-env**：同一 run_id 发生过 mid-run 修复混写、python env 混用，导致跨方法可比性不足。
+- **扩展矩阵不完整**：init/no-init/HKUST 的追加任务并未全部完成（run_state/task_summary 可证）。
+- **旧 YAML schema 缺少有效性信号**：许多 `AP030507_*.yaml` 的 `pose_timing` 不含 `pose_provider_applied_count`，
+  无法对“方法是否真正 apply（是否 no-op）”做严格 gate（这也是 imagematch/hkust 排查里最关键的证据链之一）。
+
+因此：
+- **DAIR 部分仍可作为历史统一聚合的参考**（它对应的是另一条已完成的 sweep 结果源）。
+- **OPV2V canonical fullmatrix** 需要用全新 unified run_id 重新跑（git clean + 显式 `--comm-range-gating noisy` + applied gate）。
+
+下一步执行合同见：
+- `docs/operations/opv2v_unified_fullbench_plan_20260223.md`
+- `docs/operations/benchmark_pending_runs_and_plan_20260224.md`
+
 ## 0. 这份文档解决什么问题
 
 目标是把当前仓库里“分散且口径不一”的 benchmark，压成一个可复核、可复跑、可追溯的统一口径：

@@ -13,7 +13,7 @@ This audit answers three concrete questions:
 Scope is fixed to:
 - online benchmark semantics (`solver_backend=online_box`, `runtime_mode=register_and_fuse`)
 - OPV2V camera sweeps (`noise10`, `drop20`)
-- trusted run id: `opv2v_autopilot_full_20260216_auto3_a1`
+- legacy run id: `opv2v_autopilot_full_20260216_auto3_a1` (2026-02-24 起不再作为 canonical；需在 unified fullbench 合同下复跑确认结论)
 
 ## 2) Evidence sources (source of truth)
 
@@ -102,4 +102,3 @@ Consolidated from status docs:
 Bottom line:
 - "all benchmark" is substantially complete for the currently scoped OPV2V + DAIR runs.
 - "strict full-GPU reference lane" is not complete yet due to parity/fallback gates.
-

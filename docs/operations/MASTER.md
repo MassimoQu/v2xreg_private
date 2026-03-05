@@ -5,11 +5,14 @@
 
 如果你只看一个入口：
 - **实验/结果主索引**：`docs/operations/config_experiment_map_20260220.md`
+- **Benchmark 方法目录（core vs audit）**：`docs/operations/benchmark_method_catalog.md`
 - **统一对比主报告（DAIR+OPV2V+Table III）**：`docs/operations/unified_benchmark_contract_and_comparison_20260220.md`
 - **全矩阵（有初值/无初值/HKUST）补跑状态**：`docs/operations/fullmatrix_init_noinit_hkust_benchmark_status_20260220.md`
 - **imagematch 断档领先排查（远端统一条件）**：`docs/operations/imagematch_initfree_remote_audit_20260223.md`
 - **lidarreg/hkust no-op 退化根因 + 复跑判定**：`docs/operations/lidarreg_noop_root_cause_and_rerun_20260224.md`
 - **配准评估 ↔ AP 对应关系 + AP 预估**：`docs/operations/pose_error_to_ap_mapping_report_20260224.md`
+- **待跑实验清单 + 执行合同（OPV2V/DAIR 全矩阵收口）**：`docs/operations/benchmark_pending_runs_and_plan_20260224.md`
+- **Core-first benchmark（DAIR/OPV2V/V2V4Real + Slurm）执行合同**：`docs/operations/core_benchmark_plan_20260224.md`
 
 ---
 
@@ -17,7 +20,7 @@
 
 1. **把“配准是否真的能提升协同感知 AP”这件事做成可对比 benchmark**
    - DAIR：`outputs/pose_sweep_1to10_full_gpuvoxel20260218_results.jsonl`
-   - OPV2V：`outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/`
+   - OPV2V：legacy `outputs/full_bench_opv2v_autopilot_full_20260216_auto3_a1/`（不再作为 canonical）；canonical pending 见 `docs/operations/benchmark_pending_runs_and_plan_20260224.md`（smoke: `outputs/full_bench_opv2v_unified_smoke_20260223_fix1/`）
 
 2. **把“方法本体能力（注册）”和“下游 AP 增益”分开核验**
    - DAIR Table III（paper3737=3737 pairs）复现与对齐：
@@ -70,6 +73,8 @@
 为了避免“方法 A 只因为 gating 不同而 AP 变好/变坏”的 confound，需要显式传 `--comm-range-gating` 并写入快照。
 
 （对应实现入口：`tools/run_opv2v_fullbench_fast.py`）
+
+同理，**single 的定义也必须冻结**：canonical single 是 `single_ego_only=--force-ego-input-only`（保持 comm_range/merged GT set 不变）；禁止再用 legacy `comm_range_override=0(single_comm0)` 当作 single。详见：`docs/operations/benchmark_semantics.md`。
 
 另一个必须冻结/核验的信号是 **方法是否真的生效**：
 - 对需要真正 apply pose update 的方法线，必须检查 `pose_provider_applied_count>0`；

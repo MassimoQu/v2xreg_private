@@ -2,6 +2,10 @@
 
 Last updated: 2026-02-15
 
+> NOTE (2026-03-01): This is a historical gap-analysis note written before the repo froze the unified benchmark semantics.
+> In particular, legacy `single_comm0` (comm_range=0) is **not** a fair single bound, and “oracle must be flat” is not a universal condition under `comm-range-gating=noisy`.
+> Canonical semantics: `docs/operations/benchmark_semantics.md`.
+
 目的：解释“离线 DAIR pose sweep/dropout（看起来合理）”与“OPV2V 全 GPU online/fullbench（看起来很不一样）”之间的差距，
 并给出**证据链**定位当前 OPV2V online/fullbench 的评测基础问题，以及修复路线（止损优先）。
 
@@ -29,8 +33,8 @@ Last updated: 2026-02-15
 离线 DAIR full sweep（canonical）满足 3 个 sanity checks：
 
 1) baseline 随噪声下降（noise 注入确实影响 detection/fusion）
-2) oracle 水平且最高（GT 外参；eval 几何固定）
-3) single 提供下界（comm=0；通常对噪声更不敏感）
+2) oracle 通常为上界；是否“严格水平”取决于是否冻结 comm-range pruning/噪声注入语义（见 `benchmark_semantics`）
+3) single 提供下界：canonical single 应用 `--force-ego-input-only`（保持 comm_range/GT 不变；见 `benchmark_semantics`）
 
 对应产物（canonical）：
 - `outputs/pose_sweep_1to10_full_plots/`
@@ -97,7 +101,7 @@ Last updated: 2026-02-15
 - baseline：使用 noisy pose（应随噪声下降）
 - methods：在线/离线求解相对位姿并修正（应把曲线拉回）
 - oracle：GT pose（水平上界）
-- single：comm=0 下界
+- single：canonical `single_ego_only=--force-ego-input-only`（只跑 noise=0；画成水平线；保持 comm_range/GT 不变）
 
 ### B) Calibration-free / No-extr（外参不可用）
 - 需要显式 `pose_override=zero/ego` 隐藏相对位姿
@@ -117,4 +121,3 @@ Last updated: 2026-02-15
    - 汇总时若 `pose_solver.applied` 全 0 直接标红/报错
 4) **再做 online backend 的 A/B parity**：
    - 同一模型/同一 stage1/同一噪声点，比较 `offline_map` vs `online_box(register_and_fuse)` 是否一致（小样本即可）。
-

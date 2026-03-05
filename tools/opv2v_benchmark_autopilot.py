@@ -83,7 +83,19 @@ def _build_stage1_parallel(args, log_path):
     for shard in range(num_shards):
         gpu = shard_gpus[shard % len(shard_gpus)]
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        # Slurm may remap CUDA_VISIBLE_DEVICES; treat `stage1_shard_gpus` as slot indices by default.
+        parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+        parent_list = [v.strip() for v in str(parent_visible).split(",") if v.strip()]
+        cuda_visible = str(gpu)
+        try:
+            gi = int(str(gpu))
+        except Exception:
+            gi = None
+        if parent_list and gi is not None and 0 <= gi < len(parent_list):
+            cuda_visible = parent_list[gi]
+        elif parent_list and str(gpu) in parent_list:
+            cuda_visible = str(gpu)
+        env["CUDA_VISIBLE_DEVICES"] = cuda_visible
         env["PYTHONPATH"] = str(ROOT / "HEAL")
         env["PYTHONUNBUFFERED"] = "1"
         cmd = [
@@ -239,6 +251,18 @@ def _launch_scheduler(args, run_id, *, smoke):
         "register_and_fuse",
         "--pose-source",
         "noisy_input",
+        "--comm-range-gating",
+        str(getattr(args, "comm_range_gating", "noisy")),
+        "--comm-range-override",
+        str(int(getattr(args, "comm_range_override", 70))),
+        "--pose-compare-distance-threshold",
+        str(float(getattr(args, "pose_compare_distance_threshold", 3.0))),
+        "--pose-current-precision-threshold",
+        str(float(getattr(args, "pose_current_precision_threshold", 1.8))),
+        "--pose-min-precision-improvement",
+        str(float(getattr(args, "pose_min_precision_improvement", 0.0))),
+        "--pose-min-matched-improvement",
+        str(int(getattr(args, "pose_min_matched_improvement", 0))),
         "--log-mode",
         "append",
     ]
@@ -303,6 +327,8 @@ def _summarize_and_gate(args, run_id, *, smoke, log_path):
         str(ROOT / "tools" / "summarize_opv2v_fullbench_from_yaml.py"),
         "--run-dir",
         str(run_dir),
+        "--clean-plot-dir",
+        "--strict-applied-gate",
     ]
     proc = _run(cmd, check=False, capture=True)
     if proc.returncode != 0:
@@ -343,7 +369,10 @@ def _summarize_and_gate(args, run_id, *, smoke, log_path):
     for modality in ("camera", "lidar"):
         b1 = index.get((modality, "noise10", "baseline", "bounds", low_noise))
         bmax = index.get((modality, "noise10", "baseline", "bounds", high_noise))
-        o1 = index.get((modality, "noise10", "oracle", "bounds", low_noise))
+        # Prefer explicit oracle token; fall back to legacy "oracle" for older runs.
+        o1 = index.get((modality, "noise10", "oracle_gt", "bounds", low_noise)) or index.get(
+            (modality, "noise10", "oracle", "bounds", low_noise)
+        )
         if not b1 or not bmax or not o1:
             problems.append("{} noise10 key points missing (low={}, high={})".format(modality, low_noise, high_noise))
             continue
@@ -364,7 +393,9 @@ def _summarize_and_gate(args, run_id, *, smoke, log_path):
                 "{} baseline increases with noise (AP@1 {:.4f} -> AP@max {:.4f})".format(modality, ap1, apmax)
             )
         if oap < ap1 - 1e-3:
-            problems.append("{} oracle below baseline at n=1 (oracle {:.4f}, baseline {:.4f})".format(modality, oap, ap1))
+            problems.append(
+                "{} oracle below baseline at n={} (oracle {:.4f}, baseline {:.4f})".format(modality, low_noise, oap, ap1)
+            )
 
     if problems:
         raise RuntimeError("shape gate failed: " + "; ".join(problems[:6]))
@@ -412,8 +443,25 @@ def main():
     ap.add_argument("--num-workers", type=int, default=0)
     ap.add_argument("--smoke-noise-list", type=str, default="1,5")
     ap.add_argument("--smoke-max-eval-samples", type=int, default=100)
-    ap.add_argument("--full-noise-list", type=str, default="1,2,3,4,5,6,7,8,9,10")
+    ap.add_argument("--full-noise-list", type=str, default="0,1,2,3,4,5,6,7,8,9,10")
     ap.add_argument("--full-max-eval-samples", type=int, default=0)
+    ap.add_argument(
+        "--skip-full",
+        action="store_true",
+        help="Stop after the smoke run passes gates (useful for fast diagnostics / evidence collection).",
+    )
+    ap.add_argument(
+        "--comm-range-gating",
+        type=str,
+        default="noisy",
+        choices=["auto", "clean", "noisy"],
+        help="Freeze comm-range pruning semantics for online runtime (recommended: noisy).",
+    )
+    ap.add_argument("--comm-range-override", type=int, default=70)
+    ap.add_argument("--pose-compare-distance-threshold", type=float, default=3.0)
+    ap.add_argument("--pose-current-precision-threshold", type=float, default=1.8)
+    ap.add_argument("--pose-min-precision-improvement", type=float, default=0.0)
+    ap.add_argument("--pose-min-matched-improvement", type=int, default=0)
     ap.add_argument("--max-smoke-retries", type=int, default=2)
     ap.add_argument("--max-full-retries", type=int, default=2)
     ap.add_argument("--poll-seconds", type=int, default=120)
@@ -462,27 +510,33 @@ def main():
         if not smoke_ok:
             raise RuntimeError("smoke never passed")
 
-        full_run_id = None
-        full_ok = False
-        for attempt in range(1, int(args.max_full_retries) + 1):
-            full_run_id = "opv2v_autopilot_full_{}_a{}".format(args.tag, attempt)
-            _append_log(log_path, "start full attempt {} run_id={}".format(attempt, full_run_id))
-            try:
-                proc, lf, run_dir, scheduler_log = _launch_scheduler(args, full_run_id, smoke=False)
-                _append_log(log_path, "scheduler log: {}".format(scheduler_log))
-                _wait_scheduler(args, proc, lf, run_dir, log_path)
-                _summarize_and_gate(args, full_run_id, smoke=False, log_path=log_path)
-                full_ok = True
-                break
-            except Exception as e:
-                _append_log(log_path, "full attempt {} failed: {}".format(attempt, e))
-                if attempt < int(args.max_full_retries):
-                    _ensure_stage1(args, log_path)
-                else:
-                    raise
+        if bool(args.skip_full):
+            # Smoke-only mode: treat the smoke run as the final run for reporting/auditing.
+            full_run_id = smoke_run_id
+            full_ok = True
+            _append_log(log_path, "skip-full enabled; using smoke_run_id as final_run_id={}".format(full_run_id))
+        else:
+            full_run_id = None
+            full_ok = False
+            for attempt in range(1, int(args.max_full_retries) + 1):
+                full_run_id = "opv2v_autopilot_full_{}_a{}".format(args.tag, attempt)
+                _append_log(log_path, "start full attempt {} run_id={}".format(attempt, full_run_id))
+                try:
+                    proc, lf, run_dir, scheduler_log = _launch_scheduler(args, full_run_id, smoke=False)
+                    _append_log(log_path, "scheduler log: {}".format(scheduler_log))
+                    _wait_scheduler(args, proc, lf, run_dir, log_path)
+                    _summarize_and_gate(args, full_run_id, smoke=False, log_path=log_path)
+                    full_ok = True
+                    break
+                except Exception as e:
+                    _append_log(log_path, "full attempt {} failed: {}".format(attempt, e))
+                    if attempt < int(args.max_full_retries):
+                        _ensure_stage1(args, log_path)
+                    else:
+                        raise
 
-        if not full_ok:
-            raise RuntimeError("full benchmark never passed gates")
+            if not full_ok:
+                raise RuntimeError("full benchmark never passed gates")
 
         # Evidence report for final run.
         final_run_dir = ROOT / "outputs" / ("full_bench_" + full_run_id)
@@ -504,6 +558,7 @@ def main():
         payload.update(
             {
                 "status": "success",
+                "skip_full": bool(args.skip_full),
                 "smoke_run_id": smoke_run_id,
                 "full_run_id": full_run_id,
                 "final_run_dir": final_run_dir,
