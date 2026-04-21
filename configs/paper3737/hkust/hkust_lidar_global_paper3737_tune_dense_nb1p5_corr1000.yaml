@@ -1,0 +1,23 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Tuning: single dense mode with tighter noise bound and fewer correspondences.
+
+registration_modes:
+  - name: dense
+    infra_fpfh:
+      voxel_size: 0.6
+      radius_normal: 1.2
+      radius_feature: 3.0
+    vehicle_fpfh:
+      voxel_size: 0.5
+      radius_normal: 1.0
+      radius_feature: 2.5
+
+teaser:
+  noise_bound: 1.5
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 40
+  rotation_cost_threshold: 1.0e-05
+  max_correspondences: 1000

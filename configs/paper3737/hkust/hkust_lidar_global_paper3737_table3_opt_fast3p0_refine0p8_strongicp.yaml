@@ -1,0 +1,56 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Stronger ICP refinement (more iterations + denser refine voxel).
+# Target: improve success@2m/@3m for FGR/Quatro while keeping <1s/frame.
+
+infra:
+  fpfh:
+    voxel_size: 3.0
+    radius_normal: 6.0
+    radius_feature: 12.0
+    max_nn_normal: 15
+    max_nn_feature: 50
+
+vehicle:
+  fpfh:
+    voxel_size: 3.0
+    radius_normal: 6.0
+    radius_feature: 12.0
+    max_nn_normal: 15
+    max_nn_feature: 50
+
+registration_modes:
+  - name: fast
+    infra_fpfh:
+      voxel_size: 3.0
+      radius_normal: 6.0
+      radius_feature: 12.0
+      max_nn_normal: 15
+      max_nn_feature: 50
+    vehicle_fpfh:
+      voxel_size: 3.0
+      radius_normal: 6.0
+      radius_feature: 12.0
+      max_nn_normal: 15
+      max_nn_feature: 50
+
+post_refine:
+  icp:
+    enabled: true
+    max_correspondence_distance: 5.0
+    max_iterations: 60
+    method: point_to_plane
+    refine_voxel_size: 0.8
+    refine_max_points: 20000
+    refine_max_nn_normal: 30
+    refine_radius_normal: 1.6
+
+teaser:
+  noise_bound: 3.0
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 50
+  rotation_cost_threshold: 1.0e-08
+  max_correspondences: 1500
+

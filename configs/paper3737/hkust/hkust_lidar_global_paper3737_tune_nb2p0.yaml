@@ -1,0 +1,4 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+teaser:
+  noise_bound: 2.0

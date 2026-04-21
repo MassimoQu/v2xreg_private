@@ -1,0 +1,54 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Speed/accuracy exploration config:
+# - single (coarse) mode
+# - aggressive voxelization on BOTH infra and vehicle
+# - fewer neighbors for normals/FPFH
+# - cap TEASER++ correspondences + use heuristic inlier selection
+
+infra:
+  fpfh:
+    voxel_size: 1.5
+    radius_normal: 3.0
+    radius_feature: 6.0
+    max_nn_normal: 20
+    max_nn_feature: 50
+
+vehicle:
+  fpfh:
+    voxel_size: 1.5
+    radius_normal: 3.0
+    radius_feature: 6.0
+    max_nn_normal: 20
+    max_nn_feature: 50
+
+registration_modes:
+  - name: fast
+    infra_fpfh:
+      voxel_size: 1.5
+      radius_normal: 3.0
+      radius_feature: 6.0
+      max_nn_normal: 20
+      max_nn_feature: 50
+    vehicle_fpfh:
+      voxel_size: 1.5
+      radius_normal: 3.0
+      radius_feature: 6.0
+      max_nn_normal: 20
+      max_nn_feature: 50
+
+post_refine:
+  icp:
+    enabled: true
+    max_correspondence_distance: 3.0
+    max_iterations: 20
+    method: point_to_point
+
+teaser:
+  noise_bound: 2.0
+  mutual_filter: false
+  inlier_selection_mode: PMC_HEU
+  rotation_max_iterations: 50
+  rotation_cost_threshold: 1.0e-08
+  max_correspondences: 500
+

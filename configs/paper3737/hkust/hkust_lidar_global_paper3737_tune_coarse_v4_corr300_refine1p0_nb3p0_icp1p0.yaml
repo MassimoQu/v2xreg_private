@@ -1,0 +1,56 @@
+_BASE_CONFIG_: configs/paper3737/hkust/hkust_lidar_global_paper3737_table3.yaml
+
+# Tuning: coarse FPFH, stricter ICP correspondence distance.
+
+infra:
+  fpfh:
+    voxel_size: 4.0
+    radius_normal: 8.0
+    radius_feature: 16.0
+    max_nn_normal: 20
+    max_nn_feature: 80
+    max_features: 800
+
+vehicle:
+  fpfh:
+    voxel_size: 4.0
+    radius_normal: 8.0
+    radius_feature: 16.0
+    max_nn_normal: 20
+    max_nn_feature: 80
+    max_features: 800
+
+registration_modes:
+  - name: coarse
+    infra_fpfh:
+      voxel_size: 4.0
+      radius_normal: 8.0
+      radius_feature: 16.0
+      max_nn_normal: 20
+      max_nn_feature: 80
+      max_features: 800
+    vehicle_fpfh:
+      voxel_size: 4.0
+      radius_normal: 8.0
+      radius_feature: 16.0
+      max_nn_normal: 20
+      max_nn_feature: 80
+      max_features: 800
+
+post_refine:
+  icp:
+    enabled: true
+    max_correspondence_distance: 1.0
+    max_iterations: 80
+    method: point_to_plane
+    refine_voxel_size: 1.0
+    refine_max_points: 20000
+
+teaser:
+  noise_bound: 3.0
+  mutual_filter: true
+  correspondence_sampling: topk_distance
+  inlier_selection_mode: PMC_EXACT
+  rotation_max_iterations: 40
+  rotation_cost_threshold: 1.0e-05
+  max_correspondences: 300

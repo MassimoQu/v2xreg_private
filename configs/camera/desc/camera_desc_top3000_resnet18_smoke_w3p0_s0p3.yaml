@@ -1,0 +1,47 @@
+data:
+  data_info_path: data/data_info_top3000.json
+  data_root: data/DAIR-V2X/cooperative-vehicle-infrastructure
+  dataset: DAIR-V2X
+  image_descriptor:
+    device: cuda
+    grayscale: false
+    max_boxes: 16
+    method: resnet
+    min_area: 64.0
+    model: resnet18
+    model_input_size: 224
+    patch_size: [64, 64]
+    priority_categories: [bus, truck, car]
+  max_samples: 200
+  noise: {pos_std: 0, rot_std: 0}
+  sensor_frame: camera
+  split: test
+  use_detection: false
+  use_image_descriptors: true
+evaluation:
+  success_thresholds: [1.0, 2.0, 3.0]
+  time_verbose: false
+filters:
+  distance_m: 120
+  min_confidence: 0.0
+  priority_categories: [bus, truck, car]
+  top_k: 16
+  top_k_candidates: [14, 16]
+matching:
+  core_components: [centerpoint_distance, vertex_distance]
+  corresponding_parallel: false
+  descriptor_max_pairs: 64
+  descriptor_metric: cosine
+  descriptor_min_similarity: 0.3
+  descriptor_seed: true
+  descriptor_weight: 3.0
+  distance_thresholds: {bus: 1.5, car: 1.0, cyclist: 0.5, detected: 1.0, motorcyclist: 0.5,
+    pedestrian: 0.5, tricylist: 0.5, truck: 1.5, van: 1.5}
+  filter_strategy: thresholdRetained
+  filter_threshold: 4
+  matches2extrinsic: weightedSVD
+  parallel_flag: false
+  strategy: [category, core, descriptor]
+  svd_strategy: svd_with_match
+output: {root_dir: outputs, tag: camera_desc_top3000_resnet18_smoke_w3p0_s0p3}
+solver: {max_iterations: 3, stability_gate: 0}

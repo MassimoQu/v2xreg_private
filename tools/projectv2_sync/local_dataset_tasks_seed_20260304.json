@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "title": "Task: Local Benchmarks -> eval_v2_1 (DAIR-V2X camera+lidar)",
+      "item_type": "Task",
+      "owner": "qqxluca-server",
+      "status_note": "transition/provisional. camera+lidar merged. runs: 20260303_234522_v2xtranscamera01c9cb60b1_dev100_M0_N2_D0_0 ; 20260303_234522_v2xtranslidar024da2675e_dev100_M0_N2_D0_0. local inventory: /home/qqxluca/v2xreg_private/docs/operations/server_benchmark_inventory_20260301.md",
+      "next_action": "Backfill object-level depth/scale/robustness to meet eval_v2_1 G1/G2; then rerun validate+gate; canonical = report500+GatePassed."
+    },
+    {
+      "title": "Task: Local Benchmarks -> eval_v2_1 (OPV2V fullbench camera+lidar)",
+      "item_type": "Task",
+      "owner": "qqxluca-server",
+      "status_note": "transition/provisional. fullbench exported as eval_v2_1 proxy bundle. run: 20260303_234522_v2xtransfullbencho009cad5bb2_dev100_M0_N2_D0_0. local evidence: /home/qqxluca/v2xreg_private/docs/operations/opv2v_fullbench_evidence_autopilot_core_clean_v4_laneD_20260303_run1.md",
+      "next_action": "Confirm pack/dev100 semantics + frames proxy; rerun analyses; later replace with canonical report500 GatePassed."
+    },
+    {
+      "title": "Task: Local Benchmarks -> eval_v2_1 (V2V4Real comm70+comm200)",
+      "item_type": "Task",
+      "owner": "qqxluca-server",
+      "status_note": "transition/provisional. comm70+comm200 tracked in one task. runs: 20260303_234522_v2xtransv2v4realco042473d27e_dev100_M0_N2_D0_0 ; 20260303_234522_v2xtransv2v4realco03a5089ccf_dev100_M0_N2_D0_0. analysis: /home/qqxluca/v2xreg_private/docs/operations/comm_range_gating_cbm_sensitivity_evidence_20260304.md",
+      "next_action": "Decide canonical comm-range policy (keep one or both); backfill geometry metrics; then promote report500 GatePassed as canonical."
+    }
+  ]
+}
